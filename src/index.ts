@@ -10,9 +10,18 @@
  *
  * Learn more at https://developers.cloudflare.com/workers/
  */
+import lobby from "./lobby";
 
 export default {
 	async fetch(request, env, ctx): Promise<Response> {
+		const { pathname } = new URL(request.url);
+		if (pathname.match(/^\/lobby\//)) {
+			return lobby(request, pathname, env);
+		}
+		if (pathname.match(/^\/lobbies\//)) {
+
+		}
+
 		return new Response('Hello World!');
 	},
 } satisfies ExportedHandler<Env>;
