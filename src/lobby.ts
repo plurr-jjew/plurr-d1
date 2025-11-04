@@ -28,7 +28,7 @@ const uploadImagesToR2 = async (
     } while (found)
 
     await env.prod_plurr.prepare(
-      'INSERT INTO Images (_id, lobbyId, uploadedOn, uploaderId) VALUES (?, ?, ?, ?, ?)'
+      'INSERT INTO Images(_id, lobbyId, uploadedOn, uploaderId) VALUES (?, ?, ?, ?)'
     ).bind(
       imageId,
       lobbyId,
