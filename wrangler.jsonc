@@ -27,7 +27,13 @@
 			"database_name": "prod-plurr",
 			"database_id": "e1c35195-6c12-4b99-accb-1e4ab1ec2a5a"
 		}
-	]
+	],
+	"r2_buckets": [
+		{
+			"binding": "IMAGES_BUCKET",
+			"bucket_name": "lobby-images"
+		}
+	],
 	/**
 	 * Environment Variables
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables

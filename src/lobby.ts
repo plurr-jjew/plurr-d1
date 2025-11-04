@@ -1,67 +1,6 @@
 import { generateRandomId, generateSecureId } from "./utils";
 
 /**
- * Uploads images to R2, adds image entreis and returns ids of image
- * @param lobbyId id of lobby that images are being added to
- * @param uploaderId id of user that uploaded image
- * @param imageFiles list of image files to be uploaded
- * @param env cloudflare env
- * @returns list of ids of image entries
- */
-const uploadImagesToR2 = async (
-  lobbyId: string,
-  uploaderId: string,
-  imageFiles: File[],
-  env: Env,
-) => {
-  const timestamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
-  const uploadPromises = imageFiles.map(async (image: File) => {
-    let imageId = '';
-    let found = false;
-    // check if image id exists
-    do {
-      imageId = generateSecureId(8);
-      const { results } = await env.prod_plurr.prepare(
-        "SELECT * FROM Images WHERE _id = ?",
-      ).bind(imageId).run();
-      found = results.length !== 0;
-    } while (found)
-
-    await env.prod_plurr.prepare(
-      'INSERT INTO Images(_id, lobbyId, uploadedOn, uploaderId) VALUES (?, ?, ?, ?)'
-    ).bind(
-      imageId,
-      lobbyId,
-      timestamp,
-      uploaderId,
-    ).run();
-
-    const myHeaders = new Headers();
-    myHeaders.append("Content-Type", "image/jpeg");
-
-    const file = image;
-    const requestOptions = {
-      method: "PUT",
-      headers: myHeaders,
-      body: file,
-      redirect: "follow"
-    };
-
-    const imageUploadRes = await fetch(
-      `https://plurr-cloudflare.plurr.workers.dev/${lobbyId}/${imageId}.jpg`,
-      requestOptions
-    );
-    if (imageUploadRes.status === 200) {
-      return imageId;
-    } else {
-      throw new Error('Failed to upload an image');
-    }
-  });
-
-  return await Promise.all(uploadPromises);
-}
-
-/**
  * API endpoints for /lobby
  * 
  * @param request request object of HTTP request
@@ -74,6 +13,54 @@ const lobby = async (
   pathname: string,
   env: Env
 ): Promise<Response> => {
+
+  /**
+   * Uploads images to R2, adds image entreis and returns ids of image
+   * @param lobbyId id of lobby that images are being added to
+   * @param uploaderId id of user that uploaded image
+   * @param imageFiles list of image files to be uploaded
+   * @returns list of ids of image entries
+   */
+  const uploadImagesToR2 = async (
+    lobbyId: string,
+    uploaderId: string,
+    imageFiles: File[],
+  ) => {
+    const timestamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const uploadPromises = imageFiles.map(async (image: File) => {
+      let imageId = '';
+      let found = false;
+      // check if image id exists
+      do {
+        imageId = generateSecureId(8);
+        const { results } = await env.prod_plurr.prepare(
+          "SELECT * FROM Images WHERE _id = ?",
+        ).bind(imageId).run();
+        found = results.length !== 0;
+      } while (found)
+
+      await env.prod_plurr.prepare(
+        'INSERT INTO Images(_id, lobbyId, uploadedOn, uploaderId) VALUES (?, ?, ?, ?)'
+      ).bind(
+        imageId,
+        lobbyId,
+        timestamp,
+        uploaderId,
+      ).run();
+
+      const myHeaders = new Headers();
+      myHeaders.append("Content-Type", "image/jpeg");
+
+      const file = image;
+      await env.IMAGES_BUCKET.put(`${lobbyId}/${imageId}.jpeg`, file, {
+        onlyIf: request.headers,
+        httpMetadata: request.headers,
+      });
+      return imageId;
+    });
+
+    return await Promise.all(uploadPromises);
+  }
 
   switch (request.method) {
     case 'GET': {
@@ -194,7 +181,6 @@ const lobby = async (
             lobbyId,
             ownerId,
             imageFiles,
-            env,
           );
 
           await env.prod_plurr.prepare(
@@ -225,6 +211,7 @@ const lobby = async (
           });
 
         } catch (error: any) {
+          console.error(error);
           return new Response('Internal Server Error', {
             status: 500,
             statusText: error.message ? error.message : '',
@@ -273,14 +260,7 @@ const lobby = async (
         const deletedImageList = typeof deletedImages === 'string' ? JSON.parse(deletedImages) : [];
 
         const deletePromises = deletedImageList.map(async (imageId: string) => {
-          const requestOptions = {
-            method: "DELETE",
-            redirect: "follow"
-          };
-          await fetch(
-            `https://plurr-r2.plurr.workers.dev/${lobbyId}/${imageId}}`,
-            requestOptions
-          );
+          await env.IMAGES_BUCKET.delete(`${lobbyId}/${imageId}`);
         });
         await Promise.all(deletePromises);
 
@@ -345,7 +325,6 @@ const lobby = async (
           lobbyId,
           ownerId,
           imageFiles,
-          env,
         );
         const updatedImageList = JSON.stringify([...JSON.parse(images), ...newImageList]);
 
@@ -380,14 +359,10 @@ const lobby = async (
         }
         const { ownerId } = results[0];
         // TODO: add auth
-        const requestOptions = {
-          method: "DELETE",
-          redirect: "follow"
-        };
-        await fetch(
-          `https://plurr-r2.plurr.workers.dev/lobby/lobby-id/${lobbyId}`,
-          requestOptions
-        );
+        const listed = await env.IMAGES_BUCKET.list({ prefix: `${lobbyId}` });
+        await Promise.all(listed.objects.map(
+          (object: { key: string }) => env.IMAGES_BUCKET.delete(object.key)
+        ));
 
         await env.prod_plurr.prepare('DELETE FROM Images WHERE lobbyId = ?')
           .bind(lobbyId).run();
