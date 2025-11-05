@@ -1,4 +1,5 @@
 DROP TABLE IF EXISTS Lobbies;
+DROP TABLE IF EXISTS Reactions;
 CREATE TABLE IF NOT EXISTS Lobbies (_id TEXT PRIMARY KEY, lobbyCode TEXT, createdOn TIMESTAMP, firstUploadOn TIMESTAMP, ownerId TEXT, title TEXT, viewersCanEdit BOOLEAN, images TEXT[]);
 CREATE TABLE IF NOT EXISTS Images (_id TEXT PRIMARY KEY, lobbyId TEXT, uploadedOn TIMESTAMP, uploaderId TEXT);
 CREATE TABLE IF NOT EXISTS Reactions (_id TEXT PRIMARY KEY, userId TEXT, lobbyId TEXT, imageId TEXT, createdOn TIMESTAMP, reaction TEXT);

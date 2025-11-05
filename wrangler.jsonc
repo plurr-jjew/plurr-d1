@@ -34,6 +34,9 @@
 			"bucket_name": "lobby-images"
 		}
 	],
+	"images": {
+		"binding": "IMAGES",
+	}
 	/**
 	 * Environment Variables
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables

@@ -5,7 +5,7 @@ import { generateRandomId, generateSecureId } from "./utils";
  * 
  * @param request request object of HTTP request
  * @param pathname pathname of HTTP request
- * @param env d1 env object
+ * @param env cloudflare env object
  * @returns {Response} HTTP response object for corresponding request
  */
 const lobby = async (
@@ -25,7 +25,7 @@ const lobby = async (
     lobbyId: string,
     uploaderId: string,
     imageFiles: File[],
-  ) => {
+  ): Promise<string[]> => {
     const timestamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const uploadPromises = imageFiles.map(async (image: File) => {
       let imageId = '';
@@ -74,9 +74,7 @@ const lobby = async (
         const lobbyId = pathname.replace('/lobby/lobby-id/', '');
         const { results } = await env.prod_plurr.prepare(
           "SELECT * FROM Lobbies WHERE _id = ?",
-        )
-          .bind(lobbyId)
-          .run();
+        ).bind(lobbyId).run();
 
         if (results.length === 0) {
           return Response.json('Lobby not found', {
@@ -98,9 +96,7 @@ const lobby = async (
         const lobbyCode = pathname.replace('/lobby/lobby-code/', '');
         const { results } = await env.prod_plurr.prepare(
           "SELECT * FROM Lobbies WHERE lobbyCode = ?",
-        )
-          .bind(lobbyCode)
-          .run();
+        ).bind(lobbyCode).run();
 
         if (results.length === 0) {
           return Response.json('Lobby not found', {
@@ -119,107 +115,94 @@ const lobby = async (
        * Creates a new lobby
        */
       if (pathname === '/lobby/new-lobby') {
-        try {
-          // TODO: add auth
+        // TODO: add auth
 
-          const formData = await request.formData();
-          const ownerId = formData.get('ownerId') as string;
-          const viewersCanEdit = formData.get('viewersCanEdit');
-          const title = formData.get('title') as string;
+        const formData = await request.formData();
+        const ownerId = formData.get('ownerId') as string;
+        const viewersCanEdit = formData.get('viewersCanEdit');
+        const title = formData.get('title') as string;
 
-          if (!ownerId || !viewersCanEdit || !title) {
-            return new Response('Missing Form Data', {
+        if (!ownerId || !viewersCanEdit || !title) {
+          return new Response('Missing Form Data', {
+            status: 400,
+            headers: {
+              Allow: 'POST',
+            }
+          });
+        }
+
+        // get image fields from formData
+        const imageFiles: File[] = [];
+        let imageCount = 0;
+        let image = formData.get('image0') as File;
+        while (image) {
+          if (image.type !== 'image/jpeg') {
+            return new Response('Non JPEG Image File', {
               status: 400,
               headers: {
-                Allow: 'POST',
+                Allow: 'POST'
               }
             });
           }
-
-          // get image fields from formData
-          const imageFiles: File[] = [];
-          let imageCount = 0;
-          let image = formData.get('image0') as File;
-          while (image) {
-            if (image.type !== 'image/jpeg') {
-              return new Response('Non JPEG Image File', {
-                status: 400,
-                headers: {
-                  Allow: 'POST'
-                }
-              });
-            }
-            if (image.size / (1024 * 1024) > 10) {
-              return new Response('File Size Too Large', {
-                status: 400,
-                headers: {
-                  Allow: 'POST'
-                }
-              });
-            }
-            imageFiles.push(image as File);
-            imageCount++;
-            image = formData.get(`image${imageCount}`) as File;
+          if (image.size / (1024 * 1024) > 10) {
+            return new Response('File Size Too Large', {
+              status: 400,
+              headers: {
+                Allow: 'POST'
+              }
+            });
           }
-
-          let lobbyId = '';
-          let lobbyCode = '';
-          let found = false;
-          // check if lobby code or lobby id exists
-          do {
-            lobbyId = generateSecureId();
-            lobbyCode = generateRandomId();
-            const { results } = await env.prod_plurr.prepare(
-              "SELECT * FROM Lobbies WHERE _id = ? OR lobbyCode = ?",
-            ).bind(lobbyId, lobbyCode).run();
-            found = results.length !== 0;
-          } while (found)
-
-          const timestamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
-
-          const imageList: string[] = await uploadImagesToR2(
-            lobbyId,
-            ownerId,
-            imageFiles,
-          );
-
-          await env.prod_plurr.prepare(
-            `INSERT INTO Lobbies
-            (_id, lobbyCode, createdOn, firstUploadOn, ownerId, title, viewersCanEdit, images) VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?)
-            `
-          ).bind(
-            lobbyId,
-            lobbyCode,
-            timestamp,
-            imageList.length > 0 ? timestamp : null,
-            ownerId,
-            title,
-            viewersCanEdit,
-            JSON.stringify(imageList),
-          ).run();
-
-          return new Response(JSON.stringify({
-            message: 'Created New Lobby',
-            lobbyId,
-            lobbyCode,
-          }), {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/json'
-            }
-          });
-
-        } catch (error: any) {
-          console.error(error);
-          return new Response('Internal Server Error', {
-            status: 500,
-            statusText: error.message ? error.message : '',
-            headers: {
-              Allow: 'POST'
-            }
-          })
+          imageFiles.push(image as File);
+          imageCount++;
+          image = formData.get(`image${imageCount}`) as File;
         }
+
+        let lobbyId = '';
+        let lobbyCode = '';
+        let found = false;
+        // check if lobby code or lobby id exists
+        do {
+          lobbyId = generateSecureId();
+          lobbyCode = generateRandomId();
+          const { results } = await env.prod_plurr.prepare(
+            "SELECT * FROM Lobbies WHERE _id = ? OR lobbyCode = ?",
+          ).bind(lobbyId, lobbyCode).run();
+          found = results.length !== 0;
+        } while (found)
+
+        const timestamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+        const imageList: string[] = await uploadImagesToR2(
+          lobbyId,
+          ownerId,
+          imageFiles,
+        );
+
+        await env.prod_plurr.prepare(`
+          INSERT INTO Lobbies
+          (_id, lobbyCode, createdOn, firstUploadOn, ownerId, title, viewersCanEdit, images) VALUES
+          (?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          lobbyId,
+          lobbyCode,
+          timestamp,
+          imageList.length > 0 ? timestamp : null,
+          ownerId,
+          title,
+          viewersCanEdit,
+          JSON.stringify(imageList),
+        ).run();
+
+        return new Response(JSON.stringify({
+          message: 'Created New Lobby',
+          lobbyId,
+          lobbyCode,
+        }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
       }
     }
     case 'PUT': {
@@ -245,9 +228,8 @@ const lobby = async (
         const lobbyId = pathname.replace('/lobby/lobby-id/', '');
         const { results } = await env.prod_plurr.prepare(
           "SELECT * FROM Lobbies WHERE _id = ?",
-        )
-          .bind(lobbyId)
-          .run();
+        ).bind(lobbyId).run();
+
         if (results.length === 0) {
           return new Response('Lobby Not Found', {
             status: 400
@@ -379,9 +361,9 @@ const lobby = async (
       return new Response("Method Not Allowed", {
         status: 405,
         headers: {
-          Allow: 'GET'
+          Allow: 'GET, POST, PUT, DELETE'
         }
-      })
+      });
   }
 };
 

@@ -7,3 +7,5 @@ export const generateSecureId = (length = 16) => {
   crypto.getRandomValues(array);
   return Array.from(array, byte => byte.toString(36)).join('').substring(0, length);
 }
+
+export const getTimestamp = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
