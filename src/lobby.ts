@@ -1,4 +1,4 @@
-import { generateRandomId, generateSecureId } from "./utils";
+import { generateRandomId, generateSecureId, getTimestamp } from "./utils";
 
 /**
  * API endpoints for /lobby
@@ -26,7 +26,6 @@ const lobby = async (
     uploaderId: string,
     imageFiles: File[],
   ): Promise<string[]> => {
-    const timestamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const uploadPromises = imageFiles.map(async (image: File) => {
       let imageId = '';
       let found = false;
@@ -39,13 +38,16 @@ const lobby = async (
         found = results.length !== 0;
       } while (found)
 
-      await env.prod_plurr.prepare(
-        'INSERT INTO Images(_id, lobbyId, uploadedOn, uploaderId) VALUES (?, ?, ?, ?)'
-      ).bind(
+      await env.prod_plurr.prepare(`
+        INSERT INTO Images
+        (_id, lobbyId, uploadedOn, uploaderId, reactionString)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(
         imageId,
         lobbyId,
-        timestamp,
+        getTimestamp(),
         uploaderId,
+        '0',
       ).run();
 
       const myHeaders = new Headers();
@@ -81,10 +83,24 @@ const lobby = async (
             status: 404,
           });
         }
+        const { images } = results[0];
+        const imageList = JSON.parse(images);
+
+        const { results: imageResults } = await env.prod_plurr.prepare(
+          "SELECT _id, reactionString from Images WHERE lobbyId = ?"
+        ).bind(lobbyId).run();
+
+        imageResults.sort((a: ImageEntry, b: ImageEntry) => {
+          const indexA = imageList.indexOf(a._id);
+          const indexB = imageList.indexOf(b._id);
+
+          return indexA - indexB;
+        });
+
         return Response.json({
           ...results[0],
-          images: JSON.parse(results[0].images),
-        });
+          images: imageResults,
+        }, { status: 200 });
       }
       /**
        * GET /lobby/lobby-code/{lobbyCode}
@@ -103,10 +119,24 @@ const lobby = async (
             status: 404,
           });
         }
+        const { _id: lobbyId, images } = results[0];
+        const imageList = JSON.parse(images);
+
+        const { results: imageResults } = await env.prod_plurr.prepare(
+          "SELECT _id, reactionString from Images WHERE lobbyId = ?"
+        ).bind(lobbyId).run();
+
+        imageResults.sort((a: ImageEntry, b: ImageEntry) => {
+          const indexA = imageList.indexOf(a._id);
+          const indexB = imageList.indexOf(b._id);
+
+          return indexA - indexB;
+        });
+
         return Response.json({
           ...results[0],
-          images: JSON.parse(results[0].images),
-        });
+          images: imageResults,
+        }, { status: 200 });
       }
     }
     case 'POST': {
@@ -170,8 +200,6 @@ const lobby = async (
           found = results.length !== 0;
         } while (found)
 
-        const timestamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
-
         const imageList: string[] = await uploadImagesToR2(
           lobbyId,
           ownerId,
@@ -185,8 +213,8 @@ const lobby = async (
         `).bind(
           lobbyId,
           lobbyCode,
-          timestamp,
-          imageList.length > 0 ? timestamp : null,
+          getTimestamp(),
+          imageList.length > 0 ? getTimestamp() : null,
           ownerId,
           title,
           viewersCanEdit,

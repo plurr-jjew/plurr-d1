@@ -1,4 +1,4 @@
-import { getTimestamp, generateSecureId } from "./utils";
+import { getTimestamp, generateSecureId, getReactionDisplayString } from "./utils";
 
 /**
  * API endpoints for /image
@@ -55,7 +55,6 @@ const image = async (
         const formData = await request.formData();
         const userId = await formData.get('userId');
         const newReaction = await formData.get('reaction');
-        console.log('new reaction: ', newReaction)
 
         if (userId === undefined || newReaction === undefined) {
           return new Response('Missing Form Data.', {
@@ -73,17 +72,18 @@ const image = async (
             status: 400,
           });
         }
+        const { lobbyId } = imageResults[0];
 
         const { results: reactionResults } = await env.prod_plurr.prepare(
-          "SELECT * FROM Reactions WHERE imageId = ? and userId = ?"
+          "SELECT * FROM Reactions WHERE imageId = ? AND userId = ?"
         ).bind(imageId, userId).run();
 
         if (reactionResults.length === 0) {
           await env.prod_plurr.prepare(`
             INSERT INTO Reactions
-            (_id, userId, imageId, createdOn, reaction) VALUES
-            (?, ?, ?, ?, ?)
-          `).bind(generateSecureId(12), userId, imageId, getTimestamp(), newReaction).run();
+            (_id, userId, lobbyId, imageId, createdOn, reaction) VALUES
+            (?, ?, ?, ?, ?, ?)
+          `).bind(generateSecureId(12), userId, lobbyId, imageId, getTimestamp(), newReaction).run();
         } else {
           const { _id, reaction } = reactionResults[0];
 
@@ -91,6 +91,7 @@ const image = async (
             await env.prod_plurr.prepare(
               "DELETE FROM Reactions WHERE _id = ?"
             ).bind(_id).run();
+            reactionResults
           } else {
             await env.prod_plurr.prepare(`
               UPDATE Reactions
@@ -100,10 +101,20 @@ const image = async (
           }
         }
 
-        // const { results: reactionResults2 } = await env.prod_plurr.prepare(
-        //   "SELECT * FROM Reactions WHERE imageId = ? and userId = ?"
-        // ).bind(imageId, userId).run();
-        // console.log('res2: ', reactionResults2)
+        const { results: newReactionResults } = await env.prod_plurr.prepare(
+          "SELECT * FROM Reactions WHERE imageId = ? "
+        ).bind(imageId).run();
+
+        const reactionString = getReactionDisplayString(newReactionResults);
+
+        await env.prod_plurr.prepare(`
+          UPDATE Images
+          SET reactionString = ?
+          WHERE _id = ?
+        `).bind(reactionString, imageId).run();
+        return Response.json({
+          reactionString
+        }, { status: 200 });
       }
     }
     default:

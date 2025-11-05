@@ -9,6 +9,8 @@ declare namespace Cloudflare {
 	}
 }
 interface Env extends Cloudflare.Env {
+  IMAGES: any;
+  IMAGES_BUCKET: any;
 	prod_plurr: any;
 }
 
