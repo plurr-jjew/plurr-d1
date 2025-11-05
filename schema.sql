@@ -1,8 +1,11 @@
 DROP TABLE IF EXISTS Lobbies;
 DROP TABLE IF EXISTS Reactions;
 DROP TABLE IF EXISTS Images;
-CREATE TABLE IF NOT EXISTS Lobbies (_id TEXT PRIMARY KEY, lobbyCode TEXT, createdOn TIMESTAMP, firstUploadOn TIMESTAMP, ownerId TEXT, title TEXT, viewersCanEdit BOOLEAN, images TEXT[]);
-CREATE TABLE IF NOT EXISTS Images (_id TEXT PRIMARY KEY, lobbyId TEXT, uploadedOn TIMESTAMP, uploaderId TEXT, reactionString TEXT);
-CREATE TABLE IF NOT EXISTS Reactions (_id TEXT PRIMARY KEY, userId TEXT, lobbyId TEXT, imageId TEXT, createdOn TIMESTAMP, reaction TEXT);
-CREATE TABLE IF NOT EXISTS Users (_id TEXT PRIMARY KEY, joinedLobbies TEXT[]);
-INSERT INTO Lobbies (_id, lobbyCode, createdOn, firstUploadOn, ownerId, viewersCanEdit, images) VALUES (1, '666420', '2025-11-04 11:54:00', NULL, 'testId', TRUE, '[]');
+DROP TABLE IF EXISTS Users;
+DROP TABLE IF EXISTS Reports;
+CREATE TABLE IF NOT EXISTS Lobbies (_id TEXT PRIMARY KEY, lobby_code TEXT, created_on TIMESTAMP, first_upload_on TIMESTAMP, owner_id TEXT, title TEXT, viewers_can_edit BOOLEAN, images TEXT[]);
+CREATE TABLE IF NOT EXISTS Images (_id TEXT PRIMARY KEY, lobby_id TEXT, uploaded_on TIMESTAMP, uploader_id TEXT, reaction_string TEXT);
+CREATE TABLE IF NOT EXISTS Reactions (_id TEXT PRIMARY KEY, user_id TEXT, lobby_id TEXT, image_id TEXT, created_on TIMESTAMP, reaction TEXT);
+CREATE TABLE IF NOT EXISTS Users (_id TEXT PRIMARY KEY, joined_lobbies TEXT[]);
+CREATE TABLE IF NOT EXISTS Reports (_id TEXT PRIMARY KEY, 'status' TEXT, lobby_id TEXT, creator_id TEXT, email TEXT, msg TEXT);
+-- INSERT INTO Lobbies (_id, lobbyCode, createdOn, firstUploadOn, ownerId, viewersCanEdit, images) VALUES (1, '666420', '2025-11-04 11:54:00', NULL, 'testId', TRUE, '[]');

@@ -1,4 +1,10 @@
 declare global {
+  interface Route {
+    method: 'GET' | 'POST' | 'DELETE' | 'PUT';
+    pathname: string;
+    action: ((params: { [key: string]: string }) => Promise<Response>) | (() => Promise<Response>);
+  }
+
   interface LobbyEntry {
     _id: string;
     lobbyCode: string;
@@ -27,6 +33,18 @@ declare global {
     reaction: string;
   }
 }
+
+/**
+ * Converts string from camel to snake case
+ * 
+ * @param str input camel case string
+ * @returns {string} converted snake case string
+ */
+export const camelToSnake = (str: string) => {
+  return str
+    .replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)
+    .replace(/^_/, ''); // Remove leading underscore if present
+};
 
 /**
  * Generates random id using Math.random()
@@ -59,17 +77,17 @@ export const getTimestamp = (): string => new Date().toISOString().slice(0, 19).
  * @param reactions list of reactions from an image entry
  * @returns {string} display string representing number of reactions and the first 3 emojis reactions
  */
-export const getReactionDisplayString = (reactions: ReactionEntry[]): string => {
+export const getReactionDisplayString = (reactions: string[]): string => {
   if (reactions.length === 0) {
     return '0';
   }
   const displayReactions: string[] = [];
   for (let i = 0; i < reactions.length && displayReactions.length < 4; i++) {
     if (
-      !displayReactions.includes(reactions[i].reaction) &&
-      reactions[i].reaction !== 'like'
+      !displayReactions.includes(reactions[i]) &&
+      reactions[i] !== 'like'
     ) {
-      displayReactions.push(reactions[i].reaction);
+      displayReactions.push(reactions[i]);
     }
   }
   return `${reactions.length} ${displayReactions.join('')}`;
