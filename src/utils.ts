@@ -13,7 +13,7 @@ declare global {
     ownerId: string;
     title: string;
     viewersCanEdit: boolean;
-    images: string[];
+    images: string[] | { [key: string]: any }[];
   }
 
   interface ImageEntry {
@@ -40,11 +40,20 @@ declare global {
  * @param str input camel case string
  * @returns {string} converted snake case string
  */
-export const camelToSnake = (str: string) => {
+export const camelToSnake = (str: string): string => {
   return str
     .replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)
     .replace(/^_/, ''); // Remove leading underscore if present
 };
+
+/**
+ * Converts string from snake case to camel case
+ * 
+ * @param str input snake case string
+ * @returns {string} converted camel case string
+ */
+export const snakeToCamel = (str: string): string => 
+  str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
 
 /**
  * Generates random id using Math.random()

@@ -26,8 +26,8 @@ export async function createNewReport(request: Request, d1: D1Database) {
     (?, 'open', ?, ?, ?, ?)
   `).bind(generateSecureId(12), lobbyId, creatorId, email, msg).run();
 
-  const { results } = await d1.prepare("SELECT * FROM Reports").run();
-  console.log(results);
+  // const { results } = await d1.prepare("SELECT * FROM Reports").run();
+  // console.log(results);
 
   return new Response('Created New Report', {
     status: 200,

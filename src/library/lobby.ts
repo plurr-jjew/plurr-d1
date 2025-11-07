@@ -5,6 +5,8 @@ import {
   getTimestamp
 } from "../utils";
 
+import { jsonHeader } from "./headers";
+
 /**
  * Uploads images to R2, adds image entreis and returns ids of image
  * 
@@ -56,13 +58,83 @@ const uploadImagesToR2 = async (
 }
 
 /**
+ * Takes lobby row from db and creates an object representing lobby entry.
+ * 
+ * @param lobbyRes row of lobby data from db
+ * @param hostname hostname of request
+ * @param d1 D1 database instance
+ * @returns lobby entry object
+ */
+const getLobbyEntry = async (
+  lobbyRes: { [key: string]: any },
+  hostname: string | null,
+  d1: D1Database
+): Promise<LobbyEntry> => {
+  const {
+    _id: lobbyId,
+    lobby_code,
+    created_on,
+    first_upload_on,
+    owner_id,
+    title,
+    viewers_can_edit,
+    images,
+  } = lobbyRes;
+  const imageList = typeof images === 'string' ? JSON.parse(images) : [];
+
+  const { results: imageResults } = await d1.prepare(
+    "SELECT _id, reaction_string from Images WHERE lobby_id = ?"
+  ).bind(lobbyId).run();
+
+  const imageEntries = imageList.map((imageId: string) => ({
+    _id: imageId,
+    url: hostname ? `${hostname}/image/${lobbyId}/${imageId}` : `/image/${lobbyId}/${imageId}`,
+    reactionString: imageResults.find((imageRes) => imageRes._id === imageId)?.reaction_string,
+  }));
+
+  return ({
+    _id: lobbyId,
+    lobbyCode: lobby_code,
+    createdOn: created_on,
+    firstUploadOn: first_upload_on,
+    ownerId: owner_id,
+    title,
+    viewersCanEdit: viewers_can_edit === 'true',
+    images: imageEntries,
+  });
+};
+
+/**
+ * Gets lobby _id given a corresponding 6 character code
+ * 
+ * @param lobbyCode 6 char code for lobby_code
+ * @param d1 D1 database instance
+ * @returns _id value for the corresponding lobby entry
+ */
+export async function getLobbyIdByCode(lobbyCode: string, d1: D1Database) {
+  const { results } = await d1.prepare(
+    "SELECT _id FROM Lobbies WHERE lobby_code = ?",
+  ).bind(lobbyCode).run();
+
+  if (results.length === 0) {
+    return Response.json('Lobby not found', {
+      status: 404,
+    });
+  }
+
+  return Response.json(results[0]._id, {
+    status: 200, headers: jsonHeader(),
+  });
+}
+
+/**
  * Gets lobby entry which matches _id
  * 
  * @param lobbyId id of lobby
  * @param d1 d1 instance
  * @returns HTTP response with object with fields representing lobby entry
  */
-export async function getLobbyById(lobbyId: string, d1: D1Database) {
+export async function getLobbyById(request: Request, lobbyId: string, d1: D1Database) {
   // TODO: add auth
   const { results } = await d1.prepare(
     "SELECT * FROM Lobbies WHERE _id = ?",
@@ -73,25 +145,12 @@ export async function getLobbyById(lobbyId: string, d1: D1Database) {
       status: 404,
     });
   }
-  const { images } = results[0];
-  const imageList = typeof images === 'string' ? JSON.parse(images) : [];
 
-  const { results: imageResults } = await d1.prepare(
-    "SELECT _id, reaction_string from Images WHERE lobby_id = ?"
-  ).bind(lobbyId).run();
+  const lobbyEntry = await getLobbyEntry(results[0], request.headers.get('host'), d1);
 
-  // order images in the order from images property of entry
-  imageResults.sort((a: Record<string, unknown>, b: Record<string, unknown>) => {
-    const indexA = imageList.indexOf(a._id);
-    const indexB = imageList.indexOf(b._id);
-
-    return indexA - indexB;
+  return Response.json(lobbyEntry, {
+    status: 200, headers: jsonHeader(),
   });
-
-  return Response.json({
-    ...results[0],
-    images: imageResults,
-  }, { status: 200 });
 }
 
 /**
@@ -101,7 +160,7 @@ export async function getLobbyById(lobbyId: string, d1: D1Database) {
  * @param d1 D1 instance
  * @returns HTTP response with object with fields representing lobby entry
  */
-export async function getLobbyByCode(lobbyCode: string, d1: D1Database) {
+export async function getLobbyByCode(request: Request, lobbyCode: string, d1: D1Database) {
   // TODO: add auth
 
   const { results } = await d1.prepare(
@@ -113,25 +172,12 @@ export async function getLobbyByCode(lobbyCode: string, d1: D1Database) {
       status: 404,
     });
   }
-  const { _id: lobbyId, images } = results[0];
-  const imageList = typeof images === 'string' ? JSON.parse(images) : [];
+  const lobbyEntry = await getLobbyEntry(results[0], request.headers.get('host'), d1);
 
-  const { results: imageResults } = await d1.prepare(
-    "SELECT _id, reaction_string from Images WHERE lobby_id = ?"
-  ).bind(lobbyId).run();
-
-  // order images in the order from images property of entry
-  imageResults.sort((a: Record<string, unknown>, b: Record<string, unknown>) => {
-    const indexA = imageList.indexOf(a._id);
-    const indexB = imageList.indexOf(b._id);
-
-    return indexA - indexB;
+  return Response.json(lobbyEntry, {
+    status: 200,
+    headers: jsonHeader(),
   });
-
-  return Response.json({
-    ...results[0],
-    images: imageResults,
-  }, { status: 200 });
 };
 
 /**
@@ -168,7 +214,9 @@ export async function createNewLobby(request: Request, d1: D1Database, r2: R2Buc
       return new Response('Non JPEG Image File', {
         status: 400,
         headers: {
-          Allow: 'POST'
+          Allow: 'POST',
+          'Access-Control-Allow-Credentials': 'true',
+          'Access-Control-Allow-Origin': '*',
         }
       });
     }
@@ -176,7 +224,9 @@ export async function createNewLobby(request: Request, d1: D1Database, r2: R2Buc
       return new Response('File Size Too Large', {
         status: 400,
         headers: {
-          Allow: 'POST'
+          Allow: 'POST',
+          'Access-Control-Allow-Credentials': 'true',
+          'Access-Control-Allow-Origin': '*',
         }
       });
     }
@@ -228,9 +278,7 @@ export async function createNewLobby(request: Request, d1: D1Database, r2: R2Buc
     lobbyCode,
   }), {
     status: 200,
-    headers: {
-      'Content-Type': 'application/json'
-    }
+    headers: jsonHeader(),
   });
 }
 

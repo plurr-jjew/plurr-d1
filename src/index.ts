@@ -1,13 +1,4 @@
-import { getImage, handleImageReact } from './library/image';
-import {
-  getLobbyById,
-  getLobbyByCode,
-  createNewLobby,
-  updateLobbyEntry,
-  addImagesToLobby,
-  deleteLobbyEntry,
-} from './library/lobby';
-import { createNewReport } from './library/report';
+import _routes from './routes';
 
 /**
  * Welcome to Cloudflare Workers! This is your first worker.
@@ -44,60 +35,51 @@ function createRouteMatcher(routes: Route[]) {
 
 export default {
 	async fetch(request, env, ctx): Promise<Response> {
+		const corsHeaders = {
+			'Access-Control-Allow-Origin': '*',
+			'Access-Control-Allow-Methods': 'GET,HEAD,POST,PUT,DELETE,OPTIONS',
+			'Access-Control-Max-Age': '86400',
+		};
+
 		const d1 = env.prod_plurr;
 		const r2 = env.IMAGES_BUCKET;
 		const r2Images = env.IMAGES;
 
-		const routes: Route[] = [
-			{
-				method: 'GET',
-				pathname: '/image/:lobbyId/:imageId',
-				action: (params: { [key: string]: string }) => getImage(request, params.lobbyId, params.imageId, r2, r2Images),
-			},
-			{
-				method: 'PUT',
-				pathname: '/image/:id/react',
-				action: (params: { [key: string]: string }) => handleImageReact(request, params.id, d1),
-			},
-			{
-				method: 'GET',
-				pathname: '/lobby/id/:id',
-				action: (params: { [key: string]: string }) => getLobbyById(params.id, d1),
-			},
-			{
-				method: 'GET',
-				pathname: '/lobby/code/:code',
-				action: (params: { [key: string]: string }) => getLobbyByCode(params.code, d1),
-			},
-			{
-				method: 'POST',
-				pathname: '/lobby',
-				action: () => createNewLobby(request, d1, r2),
-			},
-			{
-				method: 'PUT',
-				pathname: '/lobby/id/:id',
-				action: (params: { [key: string]: string }) => updateLobbyEntry(request, params.id, d1, r2),
-			},
-			{
-				method: 'PUT',
-				pathname: '/lobby/id/:id/upload',
-				action: (params: { [key: string]: string }) => addImagesToLobby(request, params.id, d1, r2),
-			},
-			{
-				method: 'DELETE',
-				pathname: '/lobby/id/:id',
-				action: (params: { [key: string]: string }) => deleteLobbyEntry(params.id, d1, r2),
-			},
-			{
-				method: 'POST',
-				pathname: '/report',
-				action: () => createNewReport(request, d1),
-			},
-		];
-
-		const { pathname } = new URL(request.url);
+		const routes = _routes(request, d1, r2, r2Images);
 		const matcher = createRouteMatcher(routes);
-		return matcher(request.method, pathname);
+
+		async function handleOptions(request: Request) {
+			// Handle Preflight Requests
+			return new Response(null, {
+				status: 204,
+				headers: {
+					'Access-Control-Allow-Credentials': 'true',
+					'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+					'Access-Control-Allow-Origin': '*',
+					'Access-Control-Allow-Headers': 'Content-Type'
+				}
+			});
+		}
+
+		const url = new URL(request.url);
+		if (request.method === 'OPTIONS') {
+			// Handle CORS preflight requests
+			return handleOptions(request);
+		} else if (
+			request.method === 'GET' ||
+			request.method === 'HEAD' ||
+			request.method === 'POST' ||
+			request.method === 'PUT' ||
+			request.method === 'DELETE'
+		) {
+			// Handle requests to the API server
+			return matcher(request.method, url.pathname);
+		} else {
+			return new Response(null, {
+				status: 405,
+				statusText: 'Method Not Allowed',
+			});
+		}
+
 	},
 } satisfies ExportedHandler<Env>;
