@@ -88,7 +88,7 @@ const getLobbyEntry = async (
 
   const imageEntries = imageList.map((imageId: string) => ({
     _id: imageId,
-    url: hostname ? `${hostname}/image/${lobbyId}/${imageId}` : `/image/${lobbyId}/${imageId}`,
+    // url: hostname ? `${hostname}/image/${lobbyId}/${imageId}` : `/image/${lobbyId}/${imageId}`,
     reactionString: imageResults.find((imageRes) => imageRes._id === imageId)?.reaction_string,
   }));
 
@@ -342,7 +342,7 @@ export async function updateLobbyEntry(
   `).bind(lobbyId).run();
 
   return new Response('Updated Lobby Entry', {
-    status: 200,
+    status: 200, headers: jsonHeader(),
   });
 }
 
