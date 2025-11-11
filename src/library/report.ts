@@ -1,23 +1,25 @@
+import { StatusError } from "../StatusError";
 import { generateSecureId } from "../utils";
 
 /**
  * Creates new report entry in database
  * 
- * @param request HTTP request object
+ * @param lobbyId _id of lobby the report is associated with
+ * @param creatorId id of user that created report
+ * @param email email assigned to the report entry
+ * @param msg text message for the report
  * @param d1 D1 database instance
  * @returns HTTP response object
  */
-export async function createNewReport(request: Request, d1: D1Database) {
-  const formData = await request.formData()
-  const lobbyId = formData.get('lobbyId');
-  const creatorId = formData.get('creatorId');
-  const email = formData.get('email');
-  const msg = formData.get('msg');
-
+export async function createNewReport(
+  lobbyId: string,
+  creatorId: string,
+  email: string,
+  msg: string,
+  d1: D1Database
+) {
   if (!lobbyId || !email || !msg) {
-    return new Response('Missing Required Fields', {
-      status: 400,
-    });
+    throw new StatusError('Missing Required Fields', 400);
   }
 
   await d1.prepare(`
@@ -26,10 +28,6 @@ export async function createNewReport(request: Request, d1: D1Database) {
     (?, 'open', ?, ?, ?, ?)
   `).bind(generateSecureId(12), lobbyId, creatorId, email, msg).run();
 
-  // const { results } = await d1.prepare("SELECT * FROM Reports").run();
-  // console.log(results);
-
-  return new Response('Created New Report', {
-    status: 200,
-  });
+  return true;
 }
+

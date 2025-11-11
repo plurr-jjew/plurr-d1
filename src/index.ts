@@ -1,4 +1,21 @@
-import _routes from './routes';
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+
+import { getImage, handleImageReact } from './library/image';
+import {
+	getLobbyIdByCode,
+	getLobbyById,
+	getLobbyByCode,
+	createNewLobby,
+	updateLobbyEntry,
+	addImagesToLobby,
+	deleteLobbyEntry,
+} from './library/lobby';
+import { createNewReport } from './library/report';
+
+import { getErrorResponse, getImageFileList } from './utils';
+import { jsonHeader } from './library/headers';
+import { StatusError } from './StatusError';
 
 /**
  * Welcome to Cloudflare Workers! This is your first worker.
@@ -13,73 +30,231 @@ import _routes from './routes';
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
-function createRouteMatcher(routes: Route[]) {
-	return function matchRoute(method: string, path: string) {
-		for (const route of routes) {
-			const { method: routeMethod, pathname, action } = route;
 
-			// Convert route path to a regex pattern to handle dynamic segments
-			const pattern = new RegExp(`^${pathname.replace(/:(\w+)/g, '(?<$1>[^/]+)')}$`);
-			const match = path.match(pattern);
-			if (match && method === routeMethod) {
-				// Extract named parameters
-				const params = match.groups || {};
-				return action(params);
+type Bindings = {
+	prod_plurr: D1Database;
+	IMAGES_BUCKET: R2Bucket;
+	IMAGES: any;
+}
+const app = new Hono<{ Bindings: Bindings }>()
+
+
+app.use(cors({
+	origin: 'http://localhost:8081', // Or a function to dynamically determine origin
+	allowMethods: ['GET', 'POST', 'PUT', 'DELETE'],
+	allowHeaders: ['Content-Type', 'Authorization'],
+	maxAge: 3600, // Optional: cache preflight response for 1 hour
+	credentials: true // Optional: allow credentials
+}));
+/**
+ *  Image Endpoints
+ */
+app.get('/image/:lobbyId/:imageId', async (c, next) => {
+	try {
+		const { IMAGES_BUCKET, IMAGES } = c.env;
+		const lobbyId = c.req.param('lobbyId');
+		const imageId = c.req.param('imageId');
+
+		const image = await getImage(
+			new Headers(c.req.header()),
+			lobbyId,
+			imageId,
+			IMAGES_BUCKET,
+			IMAGES
+		);
+
+		return image;
+	} catch (error) {
+		return getErrorResponse(error);
+	}
+});
+
+app.put('/image/:id/react', async (c, next) => {
+	try {
+		const { prod_plurr } = c.env;
+		const imageId = c.req.param('id');
+
+		const formData = await c.req.formData();
+		const userId = await formData.get('userId') as string;
+		const newReaction = await formData.get('reaction') as string;
+
+		const updatedReactionString = await handleImageReact(imageId, userId, newReaction, prod_plurr);
+
+		return Response.json(updatedReactionString, {
+			status: 200, headers: jsonHeader(),
+		});
+	} catch (error) {
+		return getErrorResponse(error);
+	}
+});
+
+/**
+ *  Lobby Endpoints
+ */
+
+app.get('/lobby-id/code/:code', async (c, next) => {
+	try {
+		const { prod_plurr } = c.env;
+		const lobbyCode = c.req.param('code');
+
+		const lobbyId = await getLobbyIdByCode(lobbyCode, prod_plurr);
+
+		return Response.json(lobbyId, {
+			status: 200, headers: jsonHeader(),
+		});
+	} catch (error) {
+		return getErrorResponse(error);
+	}
+});
+
+app.get('/lobby/id/:id', async (c, next) => {
+	try {
+		const { prod_plurr } = c.env;
+		const lobbyId = c.req.param('id');
+
+		const lobbyEntry = await getLobbyById(lobbyId, prod_plurr);
+
+		return Response.json(lobbyEntry, {
+			status: 200, headers: jsonHeader(),
+		});
+	} catch (error) {
+		return getErrorResponse(error);
+	}
+});
+
+app.get('/lobby/code/:code', async (c, next) => {
+	try {
+		const { prod_plurr } = c.env;
+		const lobbyCode = c.req.param('code');
+
+		const lobbyEntry = await getLobbyByCode(lobbyCode, prod_plurr);
+
+		return Response.json(lobbyEntry, {
+			status: 200, headers: jsonHeader(),
+		});
+	} catch (error) {
+		return getErrorResponse(error);
+	}
+});
+
+app.post('/lobby', async (c, next) => {
+	try {
+		const { prod_plurr, IMAGES_BUCKET } = c.env;
+
+		const formData = await c.req.formData();
+		const ownerId = formData.get('ownerId') as string;
+		const viewersCanEdit = formData.get('viewersCanEdit') as string;
+		const title = formData.get('title') as string;
+
+		if (!ownerId || !viewersCanEdit || !title) {
+			throw new StatusError('Missing Form Data', 400);
+		}
+
+		const imageFiles = await getImageFileList(formData);
+
+		const res = await createNewLobby(ownerId, title, imageFiles, viewersCanEdit, prod_plurr, IMAGES_BUCKET);
+
+		return new Response(JSON.stringify(res), {
+			status: 200,
+			headers: jsonHeader(),
+		});
+	} catch (error) {
+		return getErrorResponse(error);
+	}
+});
+
+app.put('/lobby/id/:id', async (c, next) => {
+	try {
+		const { prod_plurr, IMAGES_BUCKET } = c.env;
+		const lobbyId = c.req.param('id');
+
+		// fields to be changed
+		const propertyNames = ['images', 'title', 'viewersCanEdit'];
+		const editedFields: { property: string, value: string }[] = [];
+		// get edited fields
+		const formData = await c.req.formData();
+		console.log(formData);
+		for (const pair of formData.entries()) {
+			if (propertyNames.includes(pair[0])) {
+				editedFields.push({
+					property: pair[0],
+					value: pair[1] as string,
+				});
 			}
 		}
-		return new Response('Not Found', {
-			status: 404,
-		}); // No match found
-	};
-}
+
+		const deletedImages = formData.get('deletedImages');
+		const deletedImageList = typeof deletedImages === 'string' ? JSON.parse(deletedImages) : [];
+
+		await updateLobbyEntry(lobbyId, editedFields, deletedImageList, prod_plurr, IMAGES_BUCKET);
+
+		return new Response('Updated Lobby Entry', {
+			status: 200, headers: jsonHeader(),
+		});
+	} catch (error) {
+		return getErrorResponse(error);
+	}
+});
+
+app.put('/lobby/id/:id/upload', async (c, next) => {
+	try {
+		const { prod_plurr, IMAGES_BUCKET } = c.env;
+		const lobbyId = c.req.param('id');
+
+		const formData = await c.req.formData();
+		console.log(lobbyId)
+
+		const imageFiles = await getImageFileList(formData);
+
+		const newImageList = await addImagesToLobby(lobbyId, imageFiles, prod_plurr, IMAGES_BUCKET);
+
+		return Response.json(newImageList, {
+			status: 200, headers: jsonHeader(),
+		});
+	} catch (error) {
+		return getErrorResponse(error);
+	}
+});
+
+app.delete('/lobby/id/:id', async (c, next) => {
+	try {
+		const { prod_plurr, IMAGES_BUCKET } = c.env;
+		const lobbyId = c.req.param('id');
+
+		await deleteLobbyEntry(lobbyId, prod_plurr, IMAGES_BUCKET);
+
+		return new Response('Deleted lobby entry', {
+			status: 200, headers: jsonHeader(),
+		});
+	} catch (error) {
+		return getErrorResponse(error);
+	}
+});
+
+/**
+ *  Report Endpoints
+ */
+
+app.post('/report', async (c, next) => {
+	try {
+		const { prod_plurr } = c.env;
+		const formData = await c.req.formData();
+		const lobbyId = formData.get('lobbyId') as string;
+		const creatorId = formData.get('creatorId') as string;
+		const email = formData.get('email') as string;
+		const msg = formData.get('msg') as string;
+
+		await createNewReport(lobbyId, creatorId, email, msg, prod_plurr);
+
+		return new Response('Created new report', {
+			status: 200, headers: jsonHeader(),
+		});
+	} catch (error) {
+		return getErrorResponse(error);
+	}
+})
 
 export default {
-	async fetch(request, env, ctx): Promise<Response> {
-		const corsHeaders = {
-			'Access-Control-Allow-Origin': '*',
-			'Access-Control-Allow-Methods': 'GET,HEAD,POST,PUT,DELETE,OPTIONS',
-			'Access-Control-Max-Age': '86400',
-		};
-
-		const d1 = env.prod_plurr;
-		const r2 = env.IMAGES_BUCKET;
-		const r2Images = env.IMAGES;
-
-		const routes = _routes(request, d1, r2, r2Images);
-		const matcher = createRouteMatcher(routes);
-
-		async function handleOptions(request: Request) {
-			// Handle Preflight Requests
-			return new Response(null, {
-				status: 204,
-				headers: {
-					'Access-Control-Allow-Credentials': 'true',
-					'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-					'Access-Control-Allow-Origin': '*',
-					'Access-Control-Allow-Headers': 'Content-Type'
-				}
-			});
-		}
-
-		const url = new URL(request.url);
-		if (request.method === 'OPTIONS') {
-			// Handle CORS preflight requests
-			return handleOptions(request);
-		} else if (
-			request.method === 'GET' ||
-			request.method === 'HEAD' ||
-			request.method === 'POST' ||
-			request.method === 'PUT' ||
-			request.method === 'DELETE'
-		) {
-			// Handle requests to the API server
-			return matcher(request.method, url.pathname);
-		} else {
-			return new Response(null, {
-				status: 405,
-				statusText: 'Method Not Allowed',
-			});
-		}
-
-	},
-} satisfies ExportedHandler<Env>;
+	fetch: app.fetch,
+	// scheduled: async (batch, env) => { },
+};

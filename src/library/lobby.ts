@@ -1,3 +1,4 @@
+import { StatusError } from "../StatusError";
 import {
   camelToSnake,
   generateRandomId,
@@ -67,7 +68,6 @@ const uploadImagesToR2 = async (
  */
 const getLobbyEntry = async (
   lobbyRes: { [key: string]: any },
-  hostname: string | null,
   d1: D1Database
 ): Promise<LobbyEntry> => {
   const {
@@ -117,14 +117,10 @@ export async function getLobbyIdByCode(lobbyCode: string, d1: D1Database) {
   ).bind(lobbyCode).run();
 
   if (results.length === 0) {
-    return Response.json('Lobby not found', {
-      status: 404,
-    });
+    throw new StatusError('Lobby not found', 404);
   }
 
-  return Response.json(results[0]._id, {
-    status: 200, headers: jsonHeader(),
-  });
+  return results[0]._id;
 }
 
 /**
@@ -134,23 +130,17 @@ export async function getLobbyIdByCode(lobbyCode: string, d1: D1Database) {
  * @param d1 d1 instance
  * @returns HTTP response with object with fields representing lobby entry
  */
-export async function getLobbyById(request: Request, lobbyId: string, d1: D1Database) {
+export async function getLobbyById(lobbyId: string, d1: D1Database) {
   // TODO: add auth
   const { results } = await d1.prepare(
     "SELECT * FROM Lobbies WHERE _id = ?",
   ).bind(lobbyId).run();
 
   if (results.length === 0) {
-    return Response.json('Lobby not found', {
-      status: 404,
-    });
+    throw new StatusError('Lobby not found', 404);
   }
 
-  const lobbyEntry = await getLobbyEntry(results[0], request.headers.get('host'), d1);
-
-  return Response.json(lobbyEntry, {
-    status: 200, headers: jsonHeader(),
-  });
+  return await getLobbyEntry(results[0], d1);
 }
 
 /**
@@ -160,7 +150,7 @@ export async function getLobbyById(request: Request, lobbyId: string, d1: D1Data
  * @param d1 D1 instance
  * @returns HTTP response with object with fields representing lobby entry
  */
-export async function getLobbyByCode(request: Request, lobbyCode: string, d1: D1Database) {
+export async function getLobbyByCode(lobbyCode: string, d1: D1Database) {
   // TODO: add auth
 
   const { results } = await d1.prepare(
@@ -168,16 +158,10 @@ export async function getLobbyByCode(request: Request, lobbyCode: string, d1: D1
   ).bind(lobbyCode).run();
 
   if (results.length === 0) {
-    return Response.json('Lobby not found', {
-      status: 404,
-    });
+    throw new StatusError('Lobby not found', 404);
   }
-  const lobbyEntry = await getLobbyEntry(results[0], request.headers.get('host'), d1);
 
-  return Response.json(lobbyEntry, {
-    status: 200,
-    headers: jsonHeader(),
-  });
+  return await getLobbyEntry(results[0], d1);
 };
 
 /**
@@ -188,52 +172,15 @@ export async function getLobbyByCode(request: Request, lobbyCode: string, d1: D1
  * @param r2 R2 instance
  * @returns HTTP response with lobby code and lobby id
  */
-export async function createNewLobby(request: Request, d1: D1Database, r2: R2Bucket) {
+export async function createNewLobby(
+  ownerId: string,
+  title: string,
+  imageFiles: File[],
+  viewersCanEdit: string,
+  d1: D1Database,
+  r2: R2Bucket
+) {
   // TODO: add auth
-
-  const formData = await request.formData();
-  const ownerId = formData.get('ownerId') as string;
-  const viewersCanEdit = formData.get('viewersCanEdit');
-  const title = formData.get('title') as string;
-
-  if (!ownerId || !viewersCanEdit || !title) {
-    return new Response('Missing Form Data', {
-      status: 400,
-      headers: {
-        Allow: 'POST',
-      }
-    });
-  }
-
-  // get image fields from formData in format of 'image{n}'
-  const imageFiles: File[] = [];
-  let imageCount = 0;
-  let image = formData.get('image0') as File;
-  while (image) {
-    if (image.type !== 'image/jpeg') {
-      return new Response('Non JPEG Image File', {
-        status: 400,
-        headers: {
-          Allow: 'POST',
-          'Access-Control-Allow-Credentials': 'true',
-          'Access-Control-Allow-Origin': '*',
-        }
-      });
-    }
-    if (image.size / (1024 * 1024) > 10) {
-      return new Response('File Size Too Large', {
-        status: 400,
-        headers: {
-          Allow: 'POST',
-          'Access-Control-Allow-Credentials': 'true',
-          'Access-Control-Allow-Origin': '*',
-        }
-      });
-    }
-    imageFiles.push(image as File);
-    imageCount++;
-    image = formData.get(`image${imageCount}`) as File;
-  }
 
   let lobbyId = '';
   let lobbyCode = '';
@@ -272,60 +219,35 @@ export async function createNewLobby(request: Request, d1: D1Database, r2: R2Buc
     JSON.stringify(imageList),
   ).run();
 
-  return new Response(JSON.stringify({
-    message: 'Created New Lobby',
-    lobbyId,
-    lobbyCode,
-  }), {
-    status: 200,
-    headers: jsonHeader(),
-  });
+  return { lobbyId, lobbyCode };
 }
 
 /**
  * Updates fields of lobby entry which matches _id and deletes images.
  * 
- * @param request HTTP request object
  * @param lobbyId string to be matched with _id
+ * @param editedFields fields to be changed in lobby entry
+ * @param deletedImageList list of _id's of images to be deleted
  * @param d1 D1 instance
  * @param r2 R2 instance
  * @returns HTTP response object
  */
 export async function updateLobbyEntry(
-  request: Request,
   lobbyId: string,
+  editedFields: { property: string, value: string }[],
+  deletedImageList: string[],
   d1: D1Database,
   r2: R2Bucket
 ) {
-  // fields to be changed
-  const propertyNames = ['images', 'title', 'viewersCanEdit'];
-  const editedFields: { property: string, value: string }[] = [];
-
-  // get edited fields
-  const formData = await request.formData();
-  for (const pair of formData.entries()) {
-    if (propertyNames.includes(pair[0])) {
-      editedFields.push({
-        property: pair[0],
-        value: pair[1] as string,
-      });
-    }
-  }
-
   const { results } = await d1.prepare(
     "SELECT * FROM Lobbies WHERE _id = ?",
   ).bind(lobbyId).run();
 
   if (results.length === 0) {
-    return new Response('Lobby Not Found', {
-      status: 400
-    });
+    throw new StatusError('Lobby Not Found', 400);
   }
   const { ownerId } = results[0];
   // TODO: add auth
-
-  const deletedImages = formData.get('deletedImages');
-  const deletedImageList = typeof deletedImages === 'string' ? JSON.parse(deletedImages) : [];
 
   const deletePromises = deletedImageList.map(async (imageId: string) => {
     await r2.delete(`${lobbyId}/${imageId}`);
@@ -333,7 +255,8 @@ export async function updateLobbyEntry(
   await Promise.all(deletePromises);
 
   const setString = editedFields.map((field, idx) =>
-    `${camelToSnake(field.property)} = '${field.value}'${idx !== editedFields.length - 1 ? ',' : ''}`);
+    `${camelToSnake(field.property)} = '${field.value}'`).join(',');
+  console.log(setString)
 
   await d1.prepare(`
     UPDATE Lobbies
@@ -341,9 +264,7 @@ export async function updateLobbyEntry(
     WHERE _id = ?
   `).bind(lobbyId).run();
 
-  return new Response('Updated Lobby Entry', {
-    status: 200, headers: jsonHeader(),
-  });
+  return true;
 }
 
 /**
@@ -353,11 +274,11 @@ export async function updateLobbyEntry(
  * @param lobbyId string to be matched with _id
  * @param d1 D1 instance
  * @param r2 R2 instance
- * @returns 
+ * @returns new list of image _id's with uploaded images
  */
 export async function addImagesToLobby(
-  request: Request,
   lobbyId: string,
+  imageFiles: File[],
   d1: D1Database,
   r2: R2Bucket,
 ) {
@@ -366,40 +287,10 @@ export async function addImagesToLobby(
   ).bind(lobbyId).run();
 
   if (results.length === 0) {
-    return new Response('Lobby Not Found', {
-      status: 400
-    });
+    throw new StatusError('Lobby Not Found', 400);
   }
   const { ownerId, viewersCanEdit, images } = results[0];
   // TODO: add auth (check ownerId and viewersCanEdit)
-
-  const formData = await request.formData();
-  const imageFiles: File[] = [];
-  let imageCount = 0;
-  let image = formData.get('image0') as File;
-
-  // get image fields from formData in format of 'image{n}'
-  while (image) {
-    if (image.type !== 'image/jpeg') {
-      return new Response('Non JPEG Image File', {
-        status: 400,
-        headers: {
-          Allow: 'POST'
-        }
-      });
-    }
-    if (image.size / (1024 * 1024) > 10) {
-      return new Response('File Size Too Large', {
-        status: 400,
-        headers: {
-          Allow: 'POST'
-        }
-      });
-    }
-    imageFiles.push(image as File);
-    imageCount++;
-    image = formData.get(`image${imageCount}`) as File;
-  }
 
   const newImageList = await uploadImagesToR2(
     lobbyId,
@@ -417,9 +308,7 @@ export async function addImagesToLobby(
     WHERE _id = '${lobbyId}'
   `).run();
 
-  return new Response('Added Images to Lobby', {
-    status: 200,
-  });
+  return newImageList;
 }
 
 /**
@@ -428,7 +317,7 @@ export async function addImagesToLobby(
  * @param lobbyId string to be matched to _id
  * @param d1 D1 instance
  * @param r2 R2 instance
- * @returns Http response object
+ * @returns boolean
  */
 export async function deleteLobbyEntry(lobbyId: string, d1: D1Database, r2: R2Bucket) {
 
@@ -437,11 +326,11 @@ export async function deleteLobbyEntry(lobbyId: string, d1: D1Database, r2: R2Bu
   )
     .bind(lobbyId)
     .run();
+
   if (results.length === 0) {
-    return new Response('Lobby Not Found', {
-      status: 400
-    });
+    throw new StatusError('Lobby Not Found', 400);
   }
+
   const { ownerId } = results[0];
   // TODO: add auth
   const listed = await r2.list({ prefix: `${lobbyId}` });
@@ -454,7 +343,5 @@ export async function deleteLobbyEntry(lobbyId: string, d1: D1Database, r2: R2Bu
   await d1.prepare('DELETE FROM Lobbies WHERE _id = ?')
     .bind(lobbyId).run();
 
-  return new Response('Deleted lobby', {
-    status: 200
-  });
+  return true;
 }

@@ -1,3 +1,6 @@
+import { jsonHeader } from './library/headers';
+import { StatusError } from './StatusError';
+
 declare global {
   interface Route {
     method: 'GET' | 'POST' | 'DELETE' | 'PUT';
@@ -52,7 +55,7 @@ export const camelToSnake = (str: string): string => {
  * @param str input snake case string
  * @returns {string} converted camel case string
  */
-export const snakeToCamel = (str: string): string => 
+export const snakeToCamel = (str: string): string =>
   str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
 
 /**
@@ -101,3 +104,50 @@ export const getReactionDisplayString = (reactions: string[]): string => {
   }
   return `${reactions.length} ${displayReactions.join('')}`;
 };
+
+/**
+ * Gets list of image files from form data 
+ * 
+ * @param formData formdata from HTTP request
+ * @returns list of image files to be uploaded
+ */
+export const getImageFileList = (formData: FormData): File[] => {
+  const imageFiles: File[] = [];
+  let imageCount = 0;
+  let image = formData.get('image0') as File;
+  while (image) {
+    if (image.type !== 'image/jpeg') {
+      throw new StatusError('Non JPEG Image file', 400);
+    }
+    if (image.size / (1024 * 1024) > 10) {
+      throw new StatusError('File Size Too Large', 400);
+    }
+    imageFiles.push(image as File);
+    imageCount++;
+    image = formData.get(`image${imageCount}`) as File;
+  }
+
+  return imageFiles;
+};
+
+/**
+ * Takes error object and creates a corresponding HTTP response
+ * 
+ * @param error Error object
+ * @returns HTTP response object with corresponding message and status code
+ */
+export const getErrorResponse = (error: unknown): Response => {
+  let msg = 'Internal Server Error';
+  let status = 500;
+  
+  if (error instanceof StatusError) {
+    msg = error.message;
+    status = error.statusCode;
+  }
+
+  console.error(error);
+  return new Response(msg, {
+    status,
+    headers: jsonHeader(),
+  });
+}

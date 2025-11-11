@@ -1,9 +1,10 @@
+import { StatusError } from "../StatusError";
 import { getTimestamp, generateSecureId, getReactionDisplayString } from "../utils";
 
 /**
  * Gets image matching lobby and image id and transforms 
  * 
- * @param request HTTP request object
+ * @param headers HTTP request headers
  * @param lobbyId string that matches to lobby _id
  * @param imageId string that matches to image _id
  * @param r2 R2 instance
@@ -11,23 +12,23 @@ import { getTimestamp, generateSecureId, getReactionDisplayString } from "../uti
  * @returns image response with finished image
  */
 export async function getImage(
-  request: Request,
+  headers: Headers,
   lobbyId: string,
   imageId: string,
   r2: R2Bucket,
   r2Images: any,
 ) {
   const object = await r2.get(`${lobbyId}/${imageId}.jpeg`, {
-    onlyIf: request.headers,
-    range: request.headers,
+    onlyIf: headers,
+    range: headers,
   });
 
   if (object === null || !('body' in object)) {
-    return new Response("Object Not Found", { status: 404 });
+    throw new StatusError('Object Not Found', 404);
   }
 
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
+  const _headers = new Headers();
+  object.writeHttpMetadata(_headers);
   headers.set("etag", object.httpEtag);
 
   const imageResponse = (await r2Images.input(object.body)
@@ -40,7 +41,9 @@ export async function getImage(
 /**
  * Handles reaction for an image entry change from user
  * 
- * @param request HTTP request object
+ * @param imageId _id of image to be handled
+ * @param userId user id of user doing the action
+ * @param newReaction new reaction value
  * @param imageId string to be matched to image _id
  * @param d1 D1 database instance
  * @returns new string representing the number and type of reactions
@@ -52,18 +55,13 @@ export async function getImage(
  * Once reaction table is updated, reaction display string is generated and image entry is updated
  */
 export async function handleImageReact(
-  request: Request,
   imageId: string,
+  userId: string,
+  newReaction: string,
   d1: D1Database,
 ) {
-  const formData = await request.formData();
-  const userId = await formData.get('userId');
-  const newReaction = await formData.get('reaction');
-
   if (userId === undefined || newReaction === undefined) {
-    return new Response('Missing Form Data.', {
-      status: 400,
-    });
+    throw new StatusError('Missing Form Data.', 400);
   }
 
   const { results: imageResults } = await d1.prepare(
@@ -71,10 +69,9 @@ export async function handleImageReact(
   ).bind(imageId).run();
 
   if (imageResults.length === 0) {
-    return new Response('Image Not Found,', {
-      status: 400,
-    });
+    throw new StatusError('Image Not Found', 400);
   }
+
   const { lobby_id: lobbyId } = imageResults[0];
 
   const { results: reactionResults } = await d1.prepare(
@@ -120,7 +117,5 @@ export async function handleImageReact(
     SET reaction_string = ?
     WHERE _id = ?
   `).bind(reactionString, imageId).run();
-  return Response.json({
-    reactionString
-  }, { status: 200 });
+  return reactionString;
 }
