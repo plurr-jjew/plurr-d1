@@ -1,5 +1,7 @@
-import { StatusError } from "../StatusError";
-import { getTimestamp, generateSecureId, getReactionDisplayString } from "../utils";
+import { D1Database, R2Bucket } from "@cloudflare/workers-types";
+
+import { StatusError } from "../../StatusError";
+import { getTimestamp, generateSecureId, getReactionDisplayString } from "../../utils";
 
 /**
  * Gets image matching lobby and image id and transforms 

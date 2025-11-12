@@ -22,10 +22,15 @@
 	 * https://developers.cloudflare.com/workers/runtime-apis/bindings/
 	 */
 	"d1_databases": [
+		// {
+		// 	"binding": "prod_plurr",
+		// 	"database_name": "prod-plurr",
+		// 	"database_id": "e1c35195-6c12-4b99-accb-1e4ab1ec2a5a"
+		// },
 		{
-			"binding": "prod_plurr",
-			"database_name": "prod-plurr",
-			"database_id": "e1c35195-6c12-4b99-accb-1e4ab1ec2a5a"
+			"binding": "dev_plurr",
+			"database_name": "dev-plurr",
+			"database_id": "bc219df9-f1b5-4e8d-a86f-39732808b75a"
 		}
 	],
 	"r2_buckets": [
@@ -36,7 +41,13 @@
 	],
 	"images": {
 		"binding": "IMAGES",
-	}
+	},
+	"kv_namespaces": [
+		{
+			"binding": "KV_USERS",
+			"id": "5160afc6058543498fe62f7df6563b23"
+		}
+	],
 	/**
 	 * Environment Variables
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables

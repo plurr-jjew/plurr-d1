@@ -1,7 +1,9 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 
-import { getImage, handleImageReact } from './library/image';
+import { createAuth } from './library/auth';
+
+import { getImage, handleImageReact } from './library/actions/image';
 import {
 	getLobbyIdByCode,
 	getLobbyById,
@@ -10,12 +12,13 @@ import {
 	updateLobbyEntry,
 	addImagesToLobby,
 	deleteLobbyEntry,
-} from './library/lobby';
-import { createNewReport } from './library/report';
+} from './library/actions/lobby';
+import { createNewReport } from './library/actions/report';
 
 import { getErrorResponse, getImageFileList } from './utils';
 import { jsonHeader } from './library/headers';
 import { StatusError } from './StatusError';
+import { CloudflareBindings } from './library/env';
 
 /**
  * Welcome to Cloudflare Workers! This is your first worker.
@@ -30,14 +33,11 @@ import { StatusError } from './StatusError';
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
+type Variables = {
+	auth: ReturnType<typeof createAuth>;
+};
 
-type Bindings = {
-	prod_plurr: D1Database;
-	IMAGES_BUCKET: R2Bucket;
-	IMAGES: any;
-}
-const app = new Hono<{ Bindings: Bindings }>()
-
+const app = new Hono<{ Bindings: CloudflareBindings; Variables: Variables }>();
 
 app.use(cors({
 	origin: 'http://localhost:8081', // Or a function to dynamically determine origin
@@ -46,6 +46,21 @@ app.use(cors({
 	maxAge: 3600, // Optional: cache preflight response for 1 hour
 	credentials: true // Optional: allow credentials
 }));
+
+// Middleware to initialize auth instance for each request
+app.use('*', async (c, next) => {
+	const auth = createAuth(c.env, (c.req.raw as any).cf || {});
+	c.set('auth', auth);
+	await next();
+});
+
+// Handle all auth routes
+app.all('/api/auth/*', async c => {
+	const auth = c.get('auth');
+	// console.log(c.req.raw);
+	return auth.handler(c.req.raw);
+});
+
 /**
  *  Image Endpoints
  */
@@ -71,14 +86,14 @@ app.get('/image/:lobbyId/:imageId', async (c, next) => {
 
 app.put('/image/:id/react', async (c, next) => {
 	try {
-		const { prod_plurr } = c.env;
+		const { dev_plurr } = c.env;
 		const imageId = c.req.param('id');
 
 		const formData = await c.req.formData();
 		const userId = await formData.get('userId') as string;
 		const newReaction = await formData.get('reaction') as string;
 
-		const updatedReactionString = await handleImageReact(imageId, userId, newReaction, prod_plurr);
+		const updatedReactionString = await handleImageReact(imageId, userId, newReaction, dev_plurr);
 
 		return Response.json(updatedReactionString, {
 			status: 200, headers: jsonHeader(),
@@ -94,10 +109,10 @@ app.put('/image/:id/react', async (c, next) => {
 
 app.get('/lobby-id/code/:code', async (c, next) => {
 	try {
-		const { prod_plurr } = c.env;
+		const { dev_plurr } = c.env;
 		const lobbyCode = c.req.param('code');
 
-		const lobbyId = await getLobbyIdByCode(lobbyCode, prod_plurr);
+		const lobbyId = await getLobbyIdByCode(lobbyCode, dev_plurr);
 
 		return Response.json(lobbyId, {
 			status: 200, headers: jsonHeader(),
@@ -109,10 +124,10 @@ app.get('/lobby-id/code/:code', async (c, next) => {
 
 app.get('/lobby/id/:id', async (c, next) => {
 	try {
-		const { prod_plurr } = c.env;
+		const { dev_plurr } = c.env;
 		const lobbyId = c.req.param('id');
 
-		const lobbyEntry = await getLobbyById(lobbyId, prod_plurr);
+		const lobbyEntry = await getLobbyById(lobbyId, dev_plurr);
 
 		return Response.json(lobbyEntry, {
 			status: 200, headers: jsonHeader(),
@@ -124,10 +139,10 @@ app.get('/lobby/id/:id', async (c, next) => {
 
 app.get('/lobby/code/:code', async (c, next) => {
 	try {
-		const { prod_plurr } = c.env;
+		const { dev_plurr } = c.env;
 		const lobbyCode = c.req.param('code');
 
-		const lobbyEntry = await getLobbyByCode(lobbyCode, prod_plurr);
+		const lobbyEntry = await getLobbyByCode(lobbyCode, dev_plurr);
 
 		return Response.json(lobbyEntry, {
 			status: 200, headers: jsonHeader(),
@@ -139,7 +154,7 @@ app.get('/lobby/code/:code', async (c, next) => {
 
 app.post('/lobby', async (c, next) => {
 	try {
-		const { prod_plurr, IMAGES_BUCKET } = c.env;
+		const { dev_plurr, IMAGES_BUCKET } = c.env;
 
 		const formData = await c.req.formData();
 		const ownerId = formData.get('ownerId') as string;
@@ -152,7 +167,7 @@ app.post('/lobby', async (c, next) => {
 
 		const imageFiles = await getImageFileList(formData);
 
-		const res = await createNewLobby(ownerId, title, imageFiles, viewersCanEdit, prod_plurr, IMAGES_BUCKET);
+		const res = await createNewLobby(ownerId, title, imageFiles, viewersCanEdit, dev_plurr, IMAGES_BUCKET);
 
 		return new Response(JSON.stringify(res), {
 			status: 200,
@@ -165,7 +180,7 @@ app.post('/lobby', async (c, next) => {
 
 app.put('/lobby/id/:id', async (c, next) => {
 	try {
-		const { prod_plurr, IMAGES_BUCKET } = c.env;
+		const { dev_plurr, IMAGES_BUCKET } = c.env;
 		const lobbyId = c.req.param('id');
 
 		// fields to be changed
@@ -186,7 +201,7 @@ app.put('/lobby/id/:id', async (c, next) => {
 		const deletedImages = formData.get('deletedImages');
 		const deletedImageList = typeof deletedImages === 'string' ? JSON.parse(deletedImages) : [];
 
-		await updateLobbyEntry(lobbyId, editedFields, deletedImageList, prod_plurr, IMAGES_BUCKET);
+		await updateLobbyEntry(lobbyId, editedFields, deletedImageList, dev_plurr, IMAGES_BUCKET);
 
 		return new Response('Updated Lobby Entry', {
 			status: 200, headers: jsonHeader(),
@@ -198,7 +213,7 @@ app.put('/lobby/id/:id', async (c, next) => {
 
 app.put('/lobby/id/:id/upload', async (c, next) => {
 	try {
-		const { prod_plurr, IMAGES_BUCKET } = c.env;
+		const { dev_plurr, IMAGES_BUCKET } = c.env;
 		const lobbyId = c.req.param('id');
 
 		const formData = await c.req.formData();
@@ -206,7 +221,7 @@ app.put('/lobby/id/:id/upload', async (c, next) => {
 
 		const imageFiles = await getImageFileList(formData);
 
-		const newImageList = await addImagesToLobby(lobbyId, imageFiles, prod_plurr, IMAGES_BUCKET);
+		const newImageList = await addImagesToLobby(lobbyId, imageFiles, dev_plurr, IMAGES_BUCKET);
 
 		return Response.json(newImageList, {
 			status: 200, headers: jsonHeader(),
@@ -218,10 +233,10 @@ app.put('/lobby/id/:id/upload', async (c, next) => {
 
 app.delete('/lobby/id/:id', async (c, next) => {
 	try {
-		const { prod_plurr, IMAGES_BUCKET } = c.env;
+		const { dev_plurr, IMAGES_BUCKET } = c.env;
 		const lobbyId = c.req.param('id');
 
-		await deleteLobbyEntry(lobbyId, prod_plurr, IMAGES_BUCKET);
+		await deleteLobbyEntry(lobbyId, dev_plurr, IMAGES_BUCKET);
 
 		return new Response('Deleted lobby entry', {
 			status: 200, headers: jsonHeader(),
@@ -237,14 +252,14 @@ app.delete('/lobby/id/:id', async (c, next) => {
 
 app.post('/report', async (c, next) => {
 	try {
-		const { prod_plurr } = c.env;
+		const { dev_plurr } = c.env;
 		const formData = await c.req.formData();
 		const lobbyId = formData.get('lobbyId') as string;
 		const creatorId = formData.get('creatorId') as string;
 		const email = formData.get('email') as string;
 		const msg = formData.get('msg') as string;
 
-		await createNewReport(lobbyId, creatorId, email, msg, prod_plurr);
+		await createNewReport(lobbyId, creatorId, email, msg, dev_plurr);
 
 		return new Response('Created new report', {
 			status: 200, headers: jsonHeader(),

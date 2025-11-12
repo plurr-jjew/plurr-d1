@@ -1,12 +1,13 @@
-import { StatusError } from "../StatusError";
+import { D1Database, R2Bucket } from "@cloudflare/workers-types";
+
+import { StatusError } from "../../StatusError";
+
 import {
   camelToSnake,
   generateRandomId,
   generateSecureId,
   getTimestamp
-} from "../utils";
-
-import { jsonHeader } from "./headers";
+} from "../../utils";
 
 /**
  * Uploads images to R2, adds image entreis and returns ids of image
@@ -50,7 +51,7 @@ const uploadImagesToR2 = async (
     const myHeaders = new Headers();
     myHeaders.append("Content-Type", "image/jpeg");
 
-    const file = image;
+    const file = new Blob([image], { type: 'image/jpeg' });
     await r2.put(`${lobbyId}/${imageId}.jpeg`, file);
     return imageId;
   });
@@ -194,6 +195,22 @@ export async function createNewLobby(
       "SELECT 1 FROM Lobbies WHERE _id = ? OR lobby_code = ?",
     ).bind(lobbyId, lobbyCode).run();
     found = results.length !== 0;
+    if (!found) {
+      await d1.prepare(`
+        INSERT INTO Lobbies
+        (_id, lobby_code, created_on, first_upload_on, owner_id, title, viewers_can_edit, images) VALUES
+        (?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        lobbyId,
+        lobbyCode,
+        getTimestamp(),
+        null,
+        ownerId,
+        title,
+        viewersCanEdit,
+        '[]',
+      ).run();
+    }
   } while (found)
 
   const imageList: string[] = await uploadImagesToR2(
@@ -203,21 +220,12 @@ export async function createNewLobby(
     d1,
     r2
   );
-
+  console.log(imageList, lobbyId)
   await d1.prepare(`
-    INSERT INTO Lobbies
-    (_id, lobby_code, created_on, first_upload_on, owner_id, title, viewers_can_edit, images) VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    lobbyId,
-    lobbyCode,
-    getTimestamp(),
-    imageList.length > 0 ? getTimestamp() : null,
-    ownerId,
-    title,
-    viewersCanEdit,
-    JSON.stringify(imageList),
-  ).run();
+    UPDATE Lobbies
+    SET images = '${JSON.stringify(imageList)}'
+    WHERE _id = ?
+  `).bind(lobbyId).run();
 
   return { lobbyId, lobbyCode };
 }

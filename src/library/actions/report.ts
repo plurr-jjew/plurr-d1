@@ -1,5 +1,7 @@
-import { StatusError } from "../StatusError";
-import { generateSecureId } from "../utils";
+import { D1Database } from "@cloudflare/workers-types";
+
+import { StatusError } from "../../StatusError";
+import { generateSecureId } from "../../utils";
 
 /**
  * Creates new report entry in database

@@ -7,15 +7,31 @@
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"test": "vitest",
-		"cf-typegen": "wrangler types"
+		"cf-typegen": "wrangler types --env-interface CloudflareBindings",
+		"auth:generate": "npx --yes @better-auth/cli@latest generate --config src/library/auth/index.ts --output src/library/db/auth.schema.ts -y",
+		"auth:format": "npx --yes prettier --write src/library/db/auth.schema.ts",
+		"auth:update": "npm run auth:generate && npm run auth:format",
+		"db:generate": "drizzle-kit generate",
+		"db:migrate:dev": "wrangler d1 migrations apply dev_plurr --local",
+		"db:migrate:prod": "wrangler d1 migrations apply dev_plurr --remote",
+		"db:studio:dev": "drizzle-kit studio",
+		"db:studio:prod": "NODE_ENV=production drizzle-kit studio"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.8.19",
+		"@types/node": "^24.10.0",
+		"drizzle-kit": "^0.31.6",
 		"typescript": "^5.5.2",
 		"vitest": "~3.2.0",
-		"wrangler": "^4.46.0"
+		"wrangler": "^4.47.0"
 	},
 	"dependencies": {
+		"@cloudflare/workers-types": "^4.20251111.0",
+		"@libsql/client": "^0.15.15",
+		"better-auth": "^1.3.34",
+		"better-auth-cloudflare": "^0.2.8",
+		"better-sqlite3": "^12.4.1",
+		"drizzle-orm": "^0.44.7",
 		"hono": "^4.10.5",
 		"toastify-react-native": "^7.2.3"
 	}

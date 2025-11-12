@@ -1,3 +1,5 @@
+import { CloudflareBindings } from "../env";
+
 /**
  * API endpoints for /user/
  * 
@@ -9,7 +11,7 @@
 const user = async (
   request: Request,
   pathname: string,
-  env: Env,
+  env: CloudflareBindings,
 ): Promise<Response> => {
   switch (request.method) {
     case 'GET': {
