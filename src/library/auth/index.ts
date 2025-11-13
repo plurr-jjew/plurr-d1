@@ -53,6 +53,9 @@ function createAuth(env?: CloudflareBindings, cf?: IncomingRequestCfProperties) 
             }
           }),
         ],
+        trustedOrigins: [
+          'http://localhost:8081',
+        ],
         rateLimit: {
           enabled: false,
           window: 60, // Minimum KV TTL is 60s

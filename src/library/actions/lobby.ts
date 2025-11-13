@@ -50,9 +50,9 @@ const uploadImagesToR2 = async (
 
     const myHeaders = new Headers();
     myHeaders.append("Content-Type", "image/jpeg");
-
+    console.log(image);
     const file = new Blob([image], { type: 'image/jpeg' });
-    await r2.put(`${lobbyId}/${imageId}.jpeg`, file);
+    await r2.put(`${lobbyId}/${imageId}.jpeg`, image);
     return imageId;
   });
 
@@ -129,7 +129,7 @@ export async function getLobbyIdByCode(lobbyCode: string, d1: D1Database) {
  * 
  * @param lobbyId id of lobby
  * @param d1 d1 instance
- * @returns HTTP response with object with fields representing lobby entry
+ * @returns Object representing lobby entry
  */
 export async function getLobbyById(lobbyId: string, d1: D1Database) {
   // TODO: add auth
@@ -149,7 +149,7 @@ export async function getLobbyById(lobbyId: string, d1: D1Database) {
  * 
  * @param lobbyCode 6 character code for the lobby
  * @param d1 D1 instance
- * @returns HTTP response with object with fields representing lobby entry
+ * @returns Object representing lobby entry
  */
 export async function getLobbyByCode(lobbyCode: string, d1: D1Database) {
   // TODO: add auth
@@ -163,6 +163,32 @@ export async function getLobbyByCode(lobbyCode: string, d1: D1Database) {
   }
 
   return await getLobbyEntry(results[0], d1);
+};
+
+/**
+ * Gets lobby entry which matches lobby_code
+ * 
+ * @param userId 6 character code for the lobby
+ * @param d1 D1 instance
+ * @returns HTTP response with object with fields representing lobby entry
+ */
+export async function getLobbiesByUser(userId: string, d1: D1Database) {
+  // TODO: add auth
+
+  const { results } = await d1.prepare(
+    "SELECT * FROM Lobbies WHERE owner_id = ?",
+  ).bind(userId).run();
+
+  return results.map(({ _id, created_on, title, images }) => {
+    const imageList = JSON.parse(images as string);
+    console.log(imageList)
+    return {
+      _id: _id,
+      createdOn: created_on,
+      title: title,
+      firstImageId: imageList[0],
+    };
+  });
 };
 
 /**
@@ -220,7 +246,7 @@ export async function createNewLobby(
     d1,
     r2
   );
-  console.log(imageList, lobbyId)
+
   await d1.prepare(`
     UPDATE Lobbies
     SET images = '${JSON.stringify(imageList)}'

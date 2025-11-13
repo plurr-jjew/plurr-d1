@@ -8,6 +8,7 @@ import {
 	getLobbyIdByCode,
 	getLobbyById,
 	getLobbyByCode,
+	getLobbiesByUser,
 	createNewLobby,
 	updateLobbyEntry,
 	addImagesToLobby,
@@ -61,9 +62,10 @@ app.all('/api/auth/*', async c => {
 	return auth.handler(c.req.raw);
 });
 
-/**
- *  Image Endpoints
- */
+/* -------------------------------------------------------------------------- */
+/*                             Image Endpoints.                               */
+/* -------------------------------------------------------------------------- */
+
 app.get('/image/:lobbyId/:imageId', async (c, next) => {
 	try {
 		const { IMAGES_BUCKET, IMAGES } = c.env;
@@ -103,9 +105,9 @@ app.put('/image/:id/react', async (c, next) => {
 	}
 });
 
-/**
- *  Lobby Endpoints
- */
+/* -------------------------------------------------------------------------- */
+/*                             Lobby Endpoints.                               */
+/* -------------------------------------------------------------------------- */
 
 app.get('/lobby-id/code/:code', async (c, next) => {
 	try {
@@ -152,7 +154,33 @@ app.get('/lobby/code/:code', async (c, next) => {
 	}
 });
 
+app.get('/lobby/user/:userId', async (c, next) => {
+	const auth = c.get("auth");
+	const session = await auth.api.getSession({
+		headers: c.req.raw.headers,
+	});
+	console.log(session);
+
+	try {
+		const { dev_plurr } = c.env;
+		const userId = c.req.param('userId');
+
+		const lobbyEntries = await getLobbiesByUser(userId, dev_plurr);
+
+		return Response.json(lobbyEntries, {
+			status: 200, headers: jsonHeader(),
+		});
+	} catch (error) {
+		return getErrorResponse(error);
+	}
+});
+
 app.post('/lobby', async (c, next) => {
+	const auth = c.get("auth");
+	const session = await auth.api.getSession({
+		headers: c.req.raw.headers,
+	});
+	console.log(session);
 	try {
 		const { dev_plurr, IMAGES_BUCKET } = c.env;
 
@@ -166,6 +194,7 @@ app.post('/lobby', async (c, next) => {
 		}
 
 		const imageFiles = await getImageFileList(formData);
+		console.log(imageFiles)
 
 		const res = await createNewLobby(ownerId, title, imageFiles, viewersCanEdit, dev_plurr, IMAGES_BUCKET);
 
@@ -246,9 +275,9 @@ app.delete('/lobby/id/:id', async (c, next) => {
 	}
 });
 
-/**
- *  Report Endpoints
- */
+/* -------------------------------------------------------------------------- */
+/*                             Report Endpoints.                              */
+/* -------------------------------------------------------------------------- */
 
 app.post('/report', async (c, next) => {
 	try {
@@ -267,7 +296,12 @@ app.post('/report', async (c, next) => {
 	} catch (error) {
 		return getErrorResponse(error);
 	}
-})
+});
+
+// Simple health check
+app.get("/health", c => {
+	return c.json({ status: "ok", timestamp: new Date().toISOString() });
+});
 
 export default {
 	fetch: app.fetch,
