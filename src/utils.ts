@@ -15,6 +15,8 @@ declare global {
     firstUploadOn: string;
     ownerId: string;
     title: string;
+    isJoined: string;
+    backgroundColor: string;
     viewersCanEdit: boolean;
     images: string[] | { [key: string]: any }[];
   }

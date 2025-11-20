@@ -48,7 +48,7 @@ export async function getImage(
  * @param newReaction new reaction value
  * @param imageId string to be matched to image _id
  * @param d1 D1 database instance
- * @returns new string representing the number and type of reactions
+ * @returns new string representing the number and type of reactions and new user reaction
  * 
  * If reaction entry does not exist, reaction entry is added with reaction and userId
  * If there is a matching reaction entry with userId and reaction value, reaction entry is deleted
@@ -75,6 +75,7 @@ export async function handleImageReact(
   }
 
   const { lobby_id: lobbyId } = imageResults[0];
+  let userReaction = null;
 
   const { results: reactionResults } = await d1.prepare(
     "SELECT * FROM Reactions WHERE image_id = ? AND user_id = ?"
@@ -87,6 +88,7 @@ export async function handleImageReact(
       (?, ?, ?, ?, ?, ?)
     `).bind(generateSecureId(12), userId, lobbyId, imageId, getTimestamp(), newReaction)
       .run();
+      userReaction = newReaction;
   } else {
     const { _id, reaction } = reactionResults[0];
 
@@ -94,13 +96,14 @@ export async function handleImageReact(
       await d1.prepare(
         "DELETE FROM Reactions WHERE _id = ?"
       ).bind(_id).run();
-      reactionResults
+
     } else {
       await d1.prepare(`
         UPDATE Reactions
         SET reaction = ?
         WHERE _id = ?
       `).bind(newReaction, _id).run();
+      userReaction = newReaction;
     }
   }
 
@@ -113,11 +116,12 @@ export async function handleImageReact(
       typeof reaction === 'string' ? reaction : null
     ).filter((n) => n !== null)
   );
+  console.log('new Reaction string:', imageId, reactionString)
 
   await d1.prepare(`
     UPDATE Images
     SET reaction_string = ?
     WHERE _id = ?
   `).bind(reactionString, imageId).run();
-  return reactionString;
+  return { reactionString, userReaction } ;
 }

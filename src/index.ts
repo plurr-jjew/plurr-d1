@@ -14,6 +14,7 @@ import {
 	addImagesToLobby,
 	deleteLobbyEntry,
 } from './library/actions/lobby';
+import { getJoinedLobbies, joinLobby } from './library/actions/user';
 import { createNewReport } from './library/actions/report';
 
 import { getErrorResponse, getImageFileList } from './utils';
@@ -95,9 +96,9 @@ app.put('/image/:id/react', async (c, next) => {
 		const userId = await formData.get('userId') as string;
 		const newReaction = await formData.get('reaction') as string;
 
-		const updatedReactionString = await handleImageReact(imageId, userId, newReaction, dev_plurr);
+		const reactionRes = await handleImageReact(imageId, userId, newReaction, dev_plurr);
 
-		return Response.json(updatedReactionString, {
+		return Response.json(reactionRes, {
 			status: 200, headers: jsonHeader(),
 		});
 	} catch (error) {
@@ -126,10 +127,15 @@ app.get('/lobby-id/code/:code', async (c, next) => {
 
 app.get('/lobby/id/:id', async (c, next) => {
 	try {
+		const auth = c.get('auth');
+		const session = await auth.api.getSession({
+			headers: c.req.raw.headers,
+		});
+		const userId = session?.user.id;
 		const { dev_plurr } = c.env;
 		const lobbyId = c.req.param('id');
-
-		const lobbyEntry = await getLobbyById(lobbyId, dev_plurr);
+		console.log(session, userId)
+		const lobbyEntry = await getLobbyById(lobbyId, userId, dev_plurr);
 
 		return Response.json(lobbyEntry, {
 			status: 200, headers: jsonHeader(),
@@ -141,10 +147,16 @@ app.get('/lobby/id/:id', async (c, next) => {
 
 app.get('/lobby/code/:code', async (c, next) => {
 	try {
+		const auth = c.get('auth');
+		const session = await auth.api.getSession({
+			headers: c.req.raw.headers,
+		});
+
+		const userId = session?.user.id;
 		const { dev_plurr } = c.env;
 		const lobbyCode = c.req.param('code');
 
-		const lobbyEntry = await getLobbyByCode(lobbyCode, dev_plurr);
+		const lobbyEntry = await getLobbyByCode(lobbyCode, userId, dev_plurr);
 
 		return Response.json(lobbyEntry, {
 			status: 200, headers: jsonHeader(),
@@ -155,11 +167,15 @@ app.get('/lobby/code/:code', async (c, next) => {
 });
 
 app.get('/lobby/user/:userId', async (c, next) => {
-	const auth = c.get("auth");
+	const auth = c.get('auth');
 	const session = await auth.api.getSession({
 		headers: c.req.raw.headers,
 	});
-	console.log(session);
+	if (!session) {
+		return new Response('Unauthorized', {
+			status: 403, headers: jsonHeader(),
+		})
+	}
 
 	try {
 		const { dev_plurr } = c.env;
@@ -175,6 +191,33 @@ app.get('/lobby/user/:userId', async (c, next) => {
 	}
 });
 
+app.get('/joined-lobbies', async (c, next) => {
+	const auth = c.get('auth');
+	const session = await auth.api.getSession({
+		headers: c.req.raw.headers,
+	});
+	if (!session) {
+		return new Response('Unauthorized', {
+			status: 403, headers: jsonHeader(),
+		})
+	}
+	const userId = session.user.id;
+
+	try {
+		const { dev_plurr } = c.env;
+
+		const lobbyEntries = await getJoinedLobbies(userId, dev_plurr);
+
+		return Response.json(lobbyEntries, {
+			status: 200, headers: jsonHeader(),
+		});
+	} catch (error) {
+		console.error(error);
+		return getErrorResponse(error);
+	}
+
+});
+
 app.post('/lobby', async (c, next) => {
 	const auth = c.get("auth");
 	const session = await auth.api.getSession({
@@ -188,15 +231,23 @@ app.post('/lobby', async (c, next) => {
 		const ownerId = formData.get('ownerId') as string;
 		const viewersCanEdit = formData.get('viewersCanEdit') as string;
 		const title = formData.get('title') as string;
+		const backgroundColor = formData.get('backgroundColor') as string;
 
 		if (!ownerId || !viewersCanEdit || !title) {
 			throw new StatusError('Missing Form Data', 400);
 		}
 
 		const imageFiles = await getImageFileList(formData);
-		console.log(imageFiles)
 
-		const res = await createNewLobby(ownerId, title, imageFiles, viewersCanEdit, dev_plurr, IMAGES_BUCKET);
+		const res = await createNewLobby(
+			ownerId,
+			title,
+			backgroundColor,
+			imageFiles,
+			viewersCanEdit,
+			dev_plurr,
+			IMAGES_BUCKET
+		);
 
 		return new Response(JSON.stringify(res), {
 			status: 200,
@@ -217,7 +268,7 @@ app.put('/lobby/id/:id', async (c, next) => {
 		const editedFields: { property: string, value: string }[] = [];
 		// get edited fields
 		const formData = await c.req.formData();
-		console.log(formData);
+
 		for (const pair of formData.entries()) {
 			if (propertyNames.includes(pair[0])) {
 				editedFields.push({
@@ -253,6 +304,33 @@ app.put('/lobby/id/:id/upload', async (c, next) => {
 		const newImageList = await addImagesToLobby(lobbyId, imageFiles, dev_plurr, IMAGES_BUCKET);
 
 		return Response.json(newImageList, {
+			status: 200, headers: jsonHeader(),
+		});
+	} catch (error) {
+		return getErrorResponse(error);
+	}
+});
+
+app.put('/lobby/id/:id/join', async (c, next) => {
+	const auth = c.get('auth');
+	const session = await auth.api.getSession({
+		headers: c.req.raw.headers,
+	});
+	if (!session) {
+		return new Response('Unauthorized', {
+			status: 403, headers: jsonHeader(),
+		})
+	}
+
+	const lobbyId = c.req.param('id');
+	const userId = session?.user.id;
+
+	try {
+		const { dev_plurr } = c.env;
+
+		const joinedLobbyEntries = await joinLobby(lobbyId, userId, dev_plurr);
+
+		return Response.json(joinedLobbyEntries, {
 			status: 200, headers: jsonHeader(),
 		});
 	} catch (error) {

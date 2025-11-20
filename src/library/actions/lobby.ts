@@ -69,6 +69,7 @@ const uploadImagesToR2 = async (
  */
 const getLobbyEntry = async (
   lobbyRes: { [key: string]: any },
+  currentUserId: string | undefined,
   d1: D1Database
 ): Promise<LobbyEntry> => {
   const {
@@ -78,6 +79,7 @@ const getLobbyEntry = async (
     first_upload_on,
     owner_id,
     title,
+    background_color,
     viewers_can_edit,
     images,
   } = lobbyRes;
@@ -87,19 +89,32 @@ const getLobbyEntry = async (
     "SELECT _id, reaction_string from Images WHERE lobby_id = ?"
   ).bind(lobbyId).run();
 
-  const imageEntries = imageList.map((imageId: string) => ({
-    _id: imageId,
-    // url: hostname ? `${hostname}/image/${lobbyId}/${imageId}` : `/image/${lobbyId}/${imageId}`,
-    reactionString: imageResults.find((imageRes) => imageRes._id === imageId)?.reaction_string,
-  }));
+  const { results: reactionResults } = await d1.prepare(
+    "SELECT image_id, reaction from Reactions WHERE lobby_id = ? AND user_id = ?"
+  ).bind(lobbyId, currentUserId).run();
+
+  const { results: joinedResults } = await d1.prepare(
+    "SELECT * FROM JoinedLobbies WHERE lobby_id = ? AND user_id = ?"
+  ).bind(lobbyId, currentUserId).run();
+
+  const imageEntries = imageList.map((imageId: string) => {
+    const foundReaction = reactionResults.find((reaction) => reaction.image_id === imageId);
+    return ({
+      _id: imageId,
+      reactionString: imageResults.find((imageRes) => imageRes._id === imageId)?.reaction_string,
+      currentUserReaction: foundReaction ? foundReaction.reaction : null,
+    });
+  });
 
   return ({
     _id: lobbyId,
     lobbyCode: lobby_code,
     createdOn: created_on,
     firstUploadOn: first_upload_on,
+    isJoined: joinedResults.length !== 0,
     ownerId: owner_id,
     title,
+    backgroundColor: background_color,
     viewersCanEdit: viewers_can_edit === 'true',
     images: imageEntries,
   });
@@ -128,11 +143,11 @@ export async function getLobbyIdByCode(lobbyCode: string, d1: D1Database) {
  * Gets lobby entry which matches _id
  * 
  * @param lobbyId id of lobby
+ * @param currentUserId id of current session's user
  * @param d1 d1 instance
  * @returns Object representing lobby entry
  */
-export async function getLobbyById(lobbyId: string, d1: D1Database) {
-  // TODO: add auth
+export async function getLobbyById(lobbyId: string, currentUserId: string | undefined, d1: D1Database) {
   const { results } = await d1.prepare(
     "SELECT * FROM Lobbies WHERE _id = ?",
   ).bind(lobbyId).run();
@@ -141,7 +156,7 @@ export async function getLobbyById(lobbyId: string, d1: D1Database) {
     throw new StatusError('Lobby not found', 404);
   }
 
-  return await getLobbyEntry(results[0], d1);
+  return await getLobbyEntry(results[0], currentUserId, d1);
 }
 
 /**
@@ -151,7 +166,7 @@ export async function getLobbyById(lobbyId: string, d1: D1Database) {
  * @param d1 D1 instance
  * @returns Object representing lobby entry
  */
-export async function getLobbyByCode(lobbyCode: string, d1: D1Database) {
+export async function getLobbyByCode(lobbyCode: string, currentUserId: string | undefined, d1: D1Database) {
   // TODO: add auth
 
   const { results } = await d1.prepare(
@@ -162,7 +177,7 @@ export async function getLobbyByCode(lobbyCode: string, d1: D1Database) {
     throw new StatusError('Lobby not found', 404);
   }
 
-  return await getLobbyEntry(results[0], d1);
+  return await getLobbyEntry(results[0], currentUserId, d1);
 };
 
 /**
@@ -176,12 +191,11 @@ export async function getLobbiesByUser(userId: string, d1: D1Database) {
   // TODO: add auth
 
   const { results } = await d1.prepare(
-    "SELECT * FROM Lobbies WHERE owner_id = ?",
+    "SELECT * FROM Lobbies WHERE owner_id = ? ORDER BY created_on DESC",
   ).bind(userId).run();
 
   return results.map(({ _id, created_on, title, images }) => {
     const imageList = JSON.parse(images as string);
-    console.log(imageList)
     return {
       _id: _id,
       createdOn: created_on,
@@ -202,6 +216,7 @@ export async function getLobbiesByUser(userId: string, d1: D1Database) {
 export async function createNewLobby(
   ownerId: string,
   title: string,
+  backgroundColor: string,
   imageFiles: File[],
   viewersCanEdit: string,
   d1: D1Database,
@@ -224,8 +239,8 @@ export async function createNewLobby(
     if (!found) {
       await d1.prepare(`
         INSERT INTO Lobbies
-        (_id, lobby_code, created_on, first_upload_on, owner_id, title, viewers_can_edit, images) VALUES
-        (?, ?, ?, ?, ?, ?, ?, ?)
+        (_id, lobby_code, created_on, first_upload_on, owner_id, title, background_color, viewers_can_edit, images) VALUES
+        (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         lobbyId,
         lobbyCode,
@@ -233,6 +248,7 @@ export async function createNewLobby(
         null,
         ownerId,
         title,
+        backgroundColor,
         viewersCanEdit,
         '[]',
       ).run();

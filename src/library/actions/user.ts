@@ -1,79 +1,46 @@
-import { CloudflareBindings } from "../env";
+import { generateSecureId, getTimestamp } from "../../utils";
 
-/**
- * API endpoints for /user/
- * 
- * @param request request object of HTTP request
- * @param pathname pathname of HTTP request
- * @param env cloudflare env object
- * @returns {Response} HTTP response object for corresponding request
- */
-const user = async (
-  request: Request,
-  pathname: string,
-  env: CloudflareBindings,
-): Promise<Response> => {
-  switch (request.method) {
-    case 'GET': {
-      if (pathname === '/user/lobbies') {
-        const userId = 'test';
+export const joinLobby = async (lobbyId: string, userId: string, d1: D1Database) => {
+  const { results } = await d1.prepare(
+    "SELECT * FROM JoinedLobbies WHERE lobby_id = ? AND user_id = ?"
+  ).bind(lobbyId, userId).run();
 
-        const { results } = await env.prod_plurr.prepare(
-          "SELECT * FROM Lobbies WHERE owner_id = ?"
-        ).bind(userId).run();
-
-        return Response.json({ results }, {
-          status: 200,
-        });
-      }
-      if (pathname === '/user/joined-lobbies') {
-        const userId = 'test';
-
-        const { results } = await env.prod_plurr.prepare(
-          "SELECT joined_lobbies from Users where _id = ?"
-        ).bind(userId).run();
-
-        if (results.length == 0) {
-          return new Response('Bad request', {
-            status: 400,
-          });
-        }
-        
-        const { joined_lobbies: joinedLobbies } = results[0];
-        const joinedLobbiesList = typeof joinedLobbies === 'string' ? JSON.parse(joinedLobbies) : [];
-        const inString = joinedLobbiesList.map((lobby: LobbyEntry, idx: number) =>
-          `${lobby._id}${idx !== joinedResults.length - 1 ? ',' : ''}`);
-        const { results: joinedResults } = await env.prod_plurr.prepare(`
-            SELECT owner_id, first_upload_on, title, images
-            FROM Lobbies
-            WHERE _id IN (${inString})
-        `).run();
-
-        return Response.json(joinedResults, {
-          status: 200,
-        });
-      }
-      break;
-    }
-    case 'PUT': {
-      if (pathname === '/user/join-lobby/') {
-
-      }
-      if (pathname === '/user/leave-lobby') {
-
-      }
-    }
-    default:
-      return new Response("Method Not Allowed", {
-        status: 405,
-        headers: {
-          Allow: 'GET, POST, PUT, DELETE'
-        }
-      });
+  if (results.length === 0) {
+    const joinId = generateSecureId();
+    await d1.prepare(`
+      INSERT INTO JoinedLobbies
+      (_id, lobby_id, user_id, joined_on)
+      VALUES (?, ?, ?, ?)
+    `).bind(joinId, lobbyId, userId, getTimestamp()).run();
+    return true;
+  } else {
+    await d1.prepare(
+      "DELETE FROM JoinedLobbies WHERE lobby_id = ? AND user_id = ?"
+    ).bind(lobbyId, userId).run();
+    return false;
   }
-  return new Response('Not Found', {
-    status: 404,
-  });
-}
 
-export default user;
+};
+
+export const getJoinedLobbies = async (userId: string, d1: D1Database) => {
+  const { results } = await d1.prepare(
+    "SELECT lobby_id FROM JoinedLobbies WHERE user_id = ?"
+  ).bind(userId).run();
+
+  const { results: lobbyResults } = await d1.prepare(`
+    SELECT _id, title, images, created_on
+    FROM Lobbies
+    WHERE _id IN (${results.map((res) => `"${res.lobby_id}"`).join()})
+  `).run();
+
+  return lobbyResults.map(({ _id, created_on, title, images }) => {
+    const imageList = JSON.parse(images as string);
+    return {
+      _id: _id,
+      createdOn: created_on,
+      title: title,
+      firstImageId: imageList[0],
+    };
+  });
+};
+
