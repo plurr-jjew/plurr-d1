@@ -1,28 +1,38 @@
-import { DrizzleD1Database } from "drizzle-orm/d1";
-import { eq, and, desc, inArray } from 'drizzle-orm';
+import { DrizzleD1Database } from 'drizzle-orm/d1';
+import { eq, and, inArray } from 'drizzle-orm';
+
 import {
   joinedLobbies as db_joinedLobbies,
   lobbies as db_lobbies,
-} from "../db";
-import { generateSecureId, getTimestamp } from "../../utils";
+} from '../db';
+import { generateSecureId, getTimestamp } from '../../utils';
 
-export const joinLobby = async (lobbyId: string, userId: string, d1: D1Database) => {
-  const { results } = await d1.prepare(
-    "SELECT * FROM JoinedLobbies WHERE lobby_id = ? AND user_id = ?"
-  ).bind(lobbyId, userId).run();
+/**
+ * Toggles entry for user in JoinedLobbies table, removes entry if there is a match, adds if not.
+ * 
+ * @param lobbyId _id of lobby to be joined
+ * @param userId id of user that is joining lobby
+ * @param db Drizzle D1 instance
+ * @returns 
+ */
+export const joinLobby = async (lobbyId: string, userId: string, db: DrizzleD1Database) => {
+  const results = await db.select()
+    .from(db_joinedLobbies).where(and(
+      eq(db_joinedLobbies.lobbyId, lobbyId),
+      eq(db_joinedLobbies.userId, userId),
+    ));
 
   if (results.length === 0) {
-    const joinId = generateSecureId();
-    await d1.prepare(`
-      INSERT INTO JoinedLobbies
-      (_id, lobby_id, user_id, joined_on)
-      VALUES (?, ?, ?, ?)
-    `).bind(joinId, lobbyId, userId, getTimestamp()).run();
+    await db.insert(db_joinedLobbies).values({
+      _id: generateSecureId(),
+      lobbyId,
+      userId,
+      joinedOn: getTimestamp(),
+    });
     return true;
   } else {
-    await d1.prepare(
-      "DELETE FROM JoinedLobbies WHERE lobby_id = ? AND user_id = ?"
-    ).bind(lobbyId, userId).run();
+    await db.delete(db_joinedLobbies)
+      .where(eq(db_joinedLobbies.lobbyId, lobbyId));
     return false;
   }
 };
@@ -49,13 +59,10 @@ export const getJoinedLobbies = async (userId: string, db: DrizzleD1Database) =>
       joinedLobbiesResults.map((joinedLobby) => joinedLobby.lobbyId)
     ));
 
-  return lobbyResults.map((lobbyEntry) => {
-    const { images } = lobbyEntry;
-    const imageList = JSON.parse(images as string);
-    return {
-      ...lobbyEntry,
-      firstImageId: imageList[0],
-    };
-  });
+  return lobbyResults.map(({ _id, title, images, createdOn, }) => ({
+    _id,
+    title,
+    createdOn,
+    firstImageId: images[0],
+  }));
 };
-

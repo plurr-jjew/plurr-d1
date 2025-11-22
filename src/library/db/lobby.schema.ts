@@ -9,9 +9,9 @@ export const lobbies = sqliteTable('Lobbies', {
   ownerId: text('owner_id').notNull(),
   title: text('title').notNull(),
   backgroundColor: text('background_color').notNull().default('#e69c09'),
-  viewersCanEdit: integer('viewers_can_edit', { mode: 'boolean' }).default(false).notNull(),
-  isDraft: integer('is_draft', { mode: 'boolean' }).default(true).notNull(),
-  images: text('images').notNull(),
+  viewersCanEdit: integer('viewers_can_edit', { mode: 'boolean' }).notNull().default(false),
+  isDraft: integer('is_draft', { mode: 'boolean' }).notNull().default(true),
+  images: text('images', { mode: 'json' }).$type<string[]>().notNull().default([]),
 });
 
 export const images = sqliteTable('Images', {

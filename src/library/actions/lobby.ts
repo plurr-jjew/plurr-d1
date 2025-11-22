@@ -4,7 +4,6 @@ import { DrizzleD1Database } from "drizzle-orm/d1";
 
 import { StatusError } from "../../StatusError";
 import {
-  camelToSnake,
   generateRandomId,
   generateSecureId,
   getTimestamp
@@ -90,8 +89,6 @@ const getLobbyEntry = async (
     viewersCanEdit,
     images,
   } = lobbyRes;
-  const imageList = typeof images === 'string' ? JSON.parse(images) : [];
-
   const imageResults = await db.select({ _id: db_images._id, reactionString: db_images.reactionString })
     .from(db_images).where(eq(db_images.lobbyId, lobbyId));
 
@@ -112,7 +109,7 @@ const getLobbyEntry = async (
       ));
   }
 
-  const imageEntries = imageList.map((imageId: string) => {
+  const imageEntries = images.map((imageId: string) => {
     const foundReaction = reactionResults.find((reaction) => reaction.imageId === imageId);
     return ({
       _id: imageId,
@@ -123,13 +120,13 @@ const getLobbyEntry = async (
 
   return ({
     _id: lobbyId,
-    lobbyCode: lobbyCode,
-    createdOn: createdOn,
-    firstUploadOn: firstUploadOn,
+    lobbyCode,
+    createdOn,
+    firstUploadOn,
     isJoined: joinedResults.length !== 0,
-    ownerId: ownerId,
+    ownerId,
     title,
-    backgroundColor: backgroundColor,
+    backgroundColor,
     viewersCanEdit: viewersCanEdit === 'true',
     images: imageEntries,
   });
@@ -226,12 +223,12 @@ export async function getLobbiesByUser(userId: string, db: DrizzleD1Database) {
     ))
     .orderBy(desc(db_lobbies.createdOn));
 
-  return results.map((lobbyEntry) => {
-    const { images } = lobbyEntry;
-    const imageList = JSON.parse(images as string);
+  return results.map(({ _id, createdOn, title, images }) => {
     return {
-      ...lobbyEntry,
-      firstImageId: imageList[0],
+      _id,
+      createdOn,
+      title,
+      firstImageId: images[0],
     };
   });
 };
@@ -263,7 +260,7 @@ export async function createDraftLobby(
     backgroundColor,
     isDraft: true,
     viewersCanEdit: viewersCanEdit === 'true',
-    images: '[]',
+    images: [],
   }).onConflictDoUpdate({
     target: db_lobbies.lobbyCode,
     set: { lobbyCode: generateSecureId(6) }
@@ -348,39 +345,55 @@ export async function createNewLobby(
  * 
  * @param lobbyId string to be matched with _id
  * @param currentUserId id of user making request
- * @param editedFields fields to be changed in lobby entry
+ * @param changes fields to be changed in lobby entry
  * @param deletedImageList list of _id's of images to be deleted
  * @param db D1 instance
  * @param imagesBucket R2 instance
- * @returns HTTP response object
+ * @returns true if update is successful
  */
 export async function updateLobbyEntry(
   lobbyId: string,
   currentUserId: string,
-  editedFields: { [key: string]: string | boolean },
-  deletedImageList: string[],
+  changes: { [key: string]: string | boolean | string[] },
+  addedImages: string[],
+  deletedImages: string[],
   db: DrizzleD1Database,
   imagesBucket: R2Bucket
 ) {
-  const results = await db.select().from(db_lobbies).where(eq(db_lobbies._id, lobbyId));
+  const lobbyEntry = await db.select().from(db_lobbies)
+    .where(eq(db_lobbies._id, lobbyId)).get();
 
-  if (results.length === 0) {
+  if (!lobbyEntry) {
     throw new StatusError('Lobby Not Found', 400);
   }
-  const { ownerId } = results[0];
+  const { ownerId, images } = lobbyEntry;
   if (ownerId !== currentUserId) {
     throw new StatusError('Unauthorized', 403);
   }
 
-  const deletePromises = deletedImageList.map(async (imageId: string) => {
-    await imagesBucket.delete(`${lobbyId}/${imageId}`);
-  });
-  await Promise.all(deletePromises);
+  if (addedImages.length > 0) {
+    changes.images = [...images, ...addedImages];
+  }
 
-  await db.update(db_lobbies)
-    .set(editedFields).where(eq(db_lobbies._id, lobbyId));
+  if (deletedImages?.length > 0) {
+    const deletePromises = deletedImages.map(async (imageId: string) => {
+      await imagesBucket.delete(`${lobbyId}/${imageId}`);
+    });
+    await Promise.all(deletePromises);
+  }
 
-  return true;
+  const updateRes = await db.update(db_lobbies)
+    .set(changes)
+    .where(eq(db_lobbies._id, lobbyId))
+    .returning({
+      _id: db_lobbies._id,
+      title: db_lobbies.title,
+      images: db_lobbies.images,
+      backgroundColor: db_lobbies.backgroundColor,
+      viewersCanEdit: db_lobbies.viewersCanEdit,
+    });
+
+  return updateRes;
 }
 
 /**
@@ -428,36 +441,38 @@ export async function addImagesToLobby(
 }
 
 /**
- * Deletes lobby entry with matching _id
+ * Deletes lobby entry with matching _id, also deletes associated images in R2 bucket
  * 
  * @param lobbyId string to be matched to _id
- * @param d1 D1 instance
- * @param r2 R2 instance
+ * @param currentUserId _id of current session's user
+ * @param db Drizzle D1 instance
+ * @param imagesBucket R2 images bucket
  * @returns boolean
  */
-export async function deleteLobbyEntry(lobbyId: string, d1: D1Database, r2: R2Bucket) {
-
-  const { results } = await d1.prepare(
-    "SELECT * FROM Lobbies WHERE _id = ?",
-  )
-    .bind(lobbyId)
-    .run();
+export async function deleteLobbyEntry(
+  lobbyId: string,
+  currentUserId: string,
+  db: DrizzleD1Database,
+  imagesBucket: R2Bucket
+) {
+  const results = await db.select({ ownerId: db_lobbies.ownerId })
+    .from(db_lobbies).where(eq(db_lobbies._id, lobbyId));
 
   if (results.length === 0) {
     throw new StatusError('Lobby Not Found', 400);
   }
 
   const { ownerId } = results[0];
-  // TODO: add auth
-  const listed = await r2.list({ prefix: `${lobbyId}` });
+  if (ownerId !== currentUserId) {
+    throw new StatusError('Unauthorized', 403);
+  }
+
+  const listed = await imagesBucket.list({ prefix: `${lobbyId}` });
   await Promise.all(listed.objects.map(
-    (object: { key: string }) => r2.delete(object.key)
+    (object: { key: string }) => imagesBucket.delete(object.key)
   ));
 
-  await d1.prepare('DELETE FROM Images WHERE lobby_id = ?')
-    .bind(lobbyId).run();
-  await d1.prepare('DELETE FROM Lobbies WHERE _id = ?')
-    .bind(lobbyId).run();
+  await db.delete(db_lobbies).where(eq(db_lobbies._id, lobbyId));
 
   return true;
 }

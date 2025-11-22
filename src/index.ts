@@ -400,7 +400,7 @@ app.post('/lobby', async (c, next) => {
 });
 
 /**
- * Updated entry of lobby with corresponding _id.
+ * Updates entry of lobby with corresponding _id.
  */
 app.put('/lobby/id/:id', async (c, next) => {
 	try {
@@ -421,34 +421,32 @@ app.put('/lobby/id/:id', async (c, next) => {
 		const lobbyId = c.req.param('id');
 
 		// fields to be changed
-		const stringPropertyNames = ['images', 'title', 'backgroundColor'];
-		const boolPropertyNames = ['viewersCanEdit', 'isDraft'];
+		const editableFields = ['title', 'backgroundColor', 'viewersCanEdit', 'isDraft', 'images'];
+		const body = await c.req.json();
 
-		const editedFields: { [key: string]: string | boolean } = {};
-		// get edited fields
-		const formData = await c.req.formData();
-		for (const pair of formData.entries()) {
-			if (stringPropertyNames.includes(pair[0])) {
-				editedFields[pair[0]] = pair[1] as string;
-			}
-			if (boolPropertyNames.includes(pair[0])) {
-				editedFields[pair[0]] = pair[1] === 'true';
+		for (let key in body.changes) {
+			if (!editableFields.includes(key)) {
+				return new Response('Bad request', {
+					status: 400, headers: jsonHeader(),
+				});
 			}
 		}
 
-		const deletedImages = formData.get('deletedImages');
-		const deletedImageList = typeof deletedImages === 'string' ? JSON.parse(deletedImages) : [];
+		const addedImages = body.addedImages?.length !== 0 ? body.addedImages : [];
+		const deletedImages = body.deletedImages?.length !== 0 ? body.deletedImages : [];
+		const changes = body.changes ? body.changes : null;
 
-		await updateLobbyEntry(
+		const updateRes = await updateLobbyEntry(
 			lobbyId,
 			currentUserId,
-			editedFields,
-			deletedImageList,
+			changes,
+			addedImages,
+			deletedImages,
 			db,
 			imagesBucket,
 		);
 
-		return new Response('Updated Lobby Entry', {
+		return Response.json(updateRes, {
 			status: 200, headers: jsonHeader(),
 		});
 	} catch (error) {
@@ -486,24 +484,26 @@ app.put('/lobby/id/:id/upload', async (c, next) => {
 	}
 });
 
+/**
+ * Toggles joined lobby for user for lobby with corresponding id.
+ */
 app.put('/lobby/id/:id/join', async (c, next) => {
-	const auth = c.get('auth');
-	const session = await auth.api.getSession({
-		headers: c.req.raw.headers,
-	});
-	if (!session) {
-		return new Response('Unauthorized', {
-			status: 403, headers: jsonHeader(),
-		})
-	}
-
-	const lobbyId = c.req.param('id');
-	const userId = session?.user.id;
-
 	try {
-		const { dev_plurr } = c.env;
+		const auth = c.get('auth');
+		const session = await auth.api.getSession({
+			headers: c.req.raw.headers,
+		});
+		if (!session) {
+			return new Response('Unauthorized', {
+				status: 403, headers: jsonHeader(),
+			})
+		}
+		const userId = session?.user.id;
 
-		const joinedLobbyEntries = await joinLobby(lobbyId, userId, dev_plurr);
+		const db = c.get('db');
+		const lobbyId = c.req.param('id');
+
+		const joinedLobbyEntries = await joinLobby(lobbyId, userId, db);
 
 		return Response.json(joinedLobbyEntries, {
 			status: 200, headers: jsonHeader(),
@@ -513,23 +513,28 @@ app.put('/lobby/id/:id/join', async (c, next) => {
 	}
 });
 
+/**
+ * Deletes lobby entry with matching _id and corresponding images from R2 bucket
+ */
 app.delete('/lobby/id/:id', async (c, next) => {
-	const auth = c.get('auth');
-	const session = await auth.api.getSession({
-		headers: c.req.raw.headers,
-	});
-
-	if (!session) {
-		return new Response('Unauthorized', {
-			status: 403, headers: jsonHeader(),
-		});
-	}
-
 	try {
-		const { dev_plurr, IMAGES_BUCKET } = c.env;
+		const auth = c.get('auth');
+		const session = await auth.api.getSession({
+			headers: c.req.raw.headers,
+		});
+
+		if (!session) {
+			return new Response('Unauthorized', {
+				status: 403, headers: jsonHeader(),
+			});
+		}
+		const currentUserId = session.user.id;
+
+		const db = c.get('db');
+		const imagesBucket = c.get('imagesBucket');
 		const lobbyId = c.req.param('id');
 
-		await deleteLobbyEntry(lobbyId, dev_plurr, IMAGES_BUCKET);
+		await deleteLobbyEntry(lobbyId, currentUserId, db, imagesBucket);
 
 		return new Response('Deleted lobby entry', {
 			status: 200, headers: jsonHeader(),
