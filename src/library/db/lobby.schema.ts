@@ -6,7 +6,9 @@ export const lobbies = sqliteTable('Lobbies', {
   lobbyCode: text('lobby_code').notNull().unique(),
   createdOn: text('created_on').notNull(),
   firstUploadOn: text('first_upload_on'),
-  ownerId: text('owner_id').notNull(),
+  ownerId: text('owner_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
   title: text('title').notNull(),
   backgroundColor: text('background_color').notNull().default('#e69c09'),
   viewersCanEdit: integer('viewers_can_edit', { mode: 'boolean' }).notNull().default(false),
@@ -44,8 +46,7 @@ export const reactions = sqliteTable('Reactions', {
   imageId: text('image_id')
     .notNull()
     .references(() => images._id, { onDelete: 'cascade' }),
-  createdOn: text('created_on')
-    .notNull(),
+  createdOn: text('created_on').notNull(),
   reaction: text('reaction').notNull(),
 });
 

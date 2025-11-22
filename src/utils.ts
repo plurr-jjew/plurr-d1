@@ -40,36 +40,6 @@ declare global {
 }
 
 /**
- * Converts string from camel to snake case
- * 
- * @param str input camel case string
- * @returns {string} converted snake case string
- */
-export const camelToSnake = (str: string): string => {
-  return str
-    .replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)
-    .replace(/^_/, ''); // Remove leading underscore if present
-};
-
-/**
- * Converts string from snake case to camel case
- * 
- * @param str input snake case string
- * @returns {string} converted camel case string
- */
-export const snakeToCamel = (str: string): string =>
-  str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
-
-/**
- * Generates random id using Math.random()
- * @param length 
- * @returns {string} random string with length of length
- */
-export const generateRandomId = (length = 6): string => {
-  return Math.random().toString(36).substring(2, length + 2);
-};
-
-/**
  * Generates random id
  * @param length 
  * @returns {string} random id with length of length
@@ -105,31 +75,6 @@ export const getReactionDisplayString = (reactions: string[]): string => {
     }
   }
   return `${reactions.length} ${displayReactions.join('')}`;
-};
-
-/**
- * Gets list of image files from form data 
- * 
- * @param formData formdata from HTTP request
- * @returns list of image files to be uploaded
- */
-export const getImageFileList = (formData: FormData): File[] => {
-  const imageFiles: File[] = [];
-  let imageCount = 0;
-  let image = formData.get('image0') as File;
-  while (image) {
-    if (image.type !== 'image/jpeg') {
-      throw new StatusError('Non JPEG Image file', 400);
-    }
-    if (image.size / (1024 * 1024) > 10) {
-      throw new StatusError('File Size Too Large', 400);
-    }
-    imageFiles.push(image as File);
-    imageCount++;
-    image = formData.get(`image${imageCount}`) as File;
-  }
-
-  return imageFiles;
 };
 
 /**

@@ -1,69 +1,15 @@
-import { D1Database, R2Bucket, ReadableStream } from "@cloudflare/workers-types";
+import { R2Bucket} from "@cloudflare/workers-types";
 import { eq, and, desc } from 'drizzle-orm';
 import { DrizzleD1Database } from "drizzle-orm/d1";
 
 import { StatusError } from "../../StatusError";
-import {
-  generateRandomId,
-  generateSecureId,
-  getTimestamp
-} from "../../utils";
+import { generateSecureId, getTimestamp } from "../../utils";
 import {
   joinedLobbies as db_joinedLobbies,
   images as db_images,
   lobbies as db_lobbies,
   reactions as db_reactions,
 } from "../db";
-
-/**
- * Uploads images to R2, adds image entreis and returns ids of image
- * 
- * @param lobbyId id of lobby that images are being added to
- * @param uploaderId id of user that uploaded image
- * @param imageFiles list of image files to be uploaded
- * @returns list of ids of image entries
- */
-const uploadImagesToR2 = async (
-  lobbyId: string,
-  uploaderId: string,
-  imageFiles: File[],
-  d1: D1Database,
-  r2: R2Bucket,
-): Promise<string[]> => {
-  const uploadPromises = imageFiles.map(async (image: File) => {
-    let imageId = '';
-    let found = false;
-    // assign unique id to image
-    do {
-      imageId = generateSecureId(8);
-      const { results } = await d1.prepare(
-        "SELECT 1 FROM Images WHERE _id = ?",
-      ).bind(imageId).run();
-      found = results.length !== 0;
-    } while (found)
-
-    await d1.prepare(`
-        INSERT INTO Images
-        (_id, lobby_id, uploaded_on, uploader_id, reaction_string)
-        VALUES (?, ?, ?, ?, ?)
-    `).bind(
-      imageId,
-      lobbyId,
-      getTimestamp(),
-      uploaderId,
-      '0',
-    ).run();
-
-    const myHeaders = new Headers();
-    myHeaders.append("Content-Type", "image/jpeg");
-    console.log(image);
-    const file = new Blob([image], { type: 'image/jpeg' });
-    await r2.put(`${lobbyId}/${imageId}.jpeg`, image);
-    return imageId;
-  });
-
-  return await Promise.all(uploadPromises);
-}
 
 /**
  * Takes lobby row from db and creates an object representing lobby entry.
@@ -195,7 +141,6 @@ export async function getLobbyByCode(
       eq(db_lobbies.isDraft, false),
     ));
 
-
   if (results.length === 0) {
     throw new StatusError('Lobby not found', 404);
   }
@@ -234,31 +179,33 @@ export async function getLobbiesByUser(userId: string, db: DrizzleD1Database) {
 };
 
 /**
- * Creates a draft entry for a new lobby
+ * Creates a entry for a new lobby
  * 
  * @param ownerId _id of user that created draft
  * @param title title created by user
  * @param backgroundColor hex color chosen by user for background color gradient
  * @param viewersCanEdit determines if non owner users can upload/edit lobby
+ * @param isDraft flag for lobby is draft or not
  * @param db D1 Drizzle db object
  * @returns id of the created draft lobby entry
  */
-export async function createDraftLobby(
+export async function createNewLobby(
   ownerId: string,
   title: string,
   backgroundColor: string,
   viewersCanEdit: string,
+  isDraft: boolean,
   db: DrizzleD1Database,
 ) {
   const res = await db.insert(db_lobbies).values({
     _id: generateSecureId(),
     lobbyCode: generateSecureId(6),
     createdOn: getTimestamp(),
-    firstUploadOn: null,
+    firstUploadOn: isDraft ? getTimestamp() : null,
     ownerId,
     title,
     backgroundColor,
-    isDraft: true,
+    isDraft,
     viewersCanEdit: viewersCanEdit === 'true',
     images: [],
   }).onConflictDoUpdate({
@@ -267,77 +214,6 @@ export async function createDraftLobby(
   }).returning({ newId: db_lobbies._id });
 
   return res[0].newId;
-}
-
-/**
- * Creates a new lobby entry in db
- * 
- * @param ownerId 
- * @param title 
- * @param backgroundColor 
- * @param imageFiles 
- * @param viewersCanEdit 
- * @param d1 
- * @param r2 
- * @returns lobby id and lobby code of new lobby
- */
-export async function createNewLobby(
-  ownerId: string,
-  title: string,
-  backgroundColor: string,
-  imageFiles: File[],
-  viewersCanEdit: string,
-  d1: D1Database,
-  r2: R2Bucket
-) {
-  // TODO: add auth
-
-  let lobbyId = '';
-  let lobbyCode = '';
-  let found = false;
-  // check if lobby code or lobby id exists
-  do {
-    lobbyId = generateSecureId();
-    lobbyCode = generateRandomId();
-
-    const { results } = await d1.prepare(
-      "SELECT 1 FROM Lobbies WHERE _id = ? OR lobby_code = ?",
-    ).bind(lobbyId, lobbyCode).run();
-    found = results.length !== 0;
-    if (!found) {
-      await d1.prepare(`
-        INSERT INTO Lobbies
-        (_id, lobby_code, created_on, first_upload_on, owner_id, title, background_color, viewers_can_edit, images) VALUES
-        (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(
-        lobbyId,
-        lobbyCode,
-        getTimestamp(),
-        null,
-        ownerId,
-        title,
-        backgroundColor,
-        viewersCanEdit,
-        '[]',
-      ).run();
-    }
-  } while (found)
-
-  const imageList: string[] = await uploadImagesToR2(
-    lobbyId,
-    ownerId,
-    imageFiles,
-    d1,
-    r2
-  );
-
-  await d1.prepare(`
-    UPDATE Lobbies
-    SET images = '${JSON.stringify(imageList)}'
-    WHERE _id = ?
-  `).bind(lobbyId).run();
-
-  return { lobbyId, lobbyCode };
 }
 
 /**
@@ -394,50 +270,6 @@ export async function updateLobbyEntry(
     });
 
   return updateRes;
-}
-
-/**
- * Add images to existing lobby and uploads to r2
- * 
- * @param request HTTP request object
- * @param lobbyId string to be matched with _id
- * @param d1 D1 instance
- * @param r2 R2 instance
- * @returns new list of image _id's with uploaded images
- */
-export async function addImagesToLobby(
-  lobbyId: string,
-  imageFiles: File[],
-  d1: D1Database,
-  r2: R2Bucket,
-) {
-  const { results } = await d1.prepare(
-    "SELECT * FROM Lobbies WHERE _id = ?",
-  ).bind(lobbyId).run();
-
-  if (results.length === 0) {
-    throw new StatusError('Lobby Not Found', 400);
-  }
-  const { ownerId, viewersCanEdit, images } = results[0];
-  // TODO: add auth (check ownerId and viewersCanEdit)
-
-  const newImageList = await uploadImagesToR2(
-    lobbyId,
-    ownerId ? ownerId as string : 'test',
-    imageFiles,
-    d1,
-    r2
-  );
-  const originalImages = typeof images === 'string' ? JSON.parse(images) : [];
-  const updatedImageList = JSON.stringify([...originalImages, ...newImageList]);
-
-  await d1.prepare(`
-    UPDATE Lobbies
-    SET images = '${updatedImageList}'
-    WHERE _id = '${lobbyId}'
-  `).run();
-
-  return newImageList;
 }
 
 /**

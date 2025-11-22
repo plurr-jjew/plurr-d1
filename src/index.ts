@@ -12,16 +12,13 @@ import {
 	getLobbiesByUser,
 	createNewLobby,
 	updateLobbyEntry,
-	addImagesToLobby,
 	deleteLobbyEntry,
-	createDraftLobby,
 } from './library/actions/lobby';
 import { getJoinedLobbies, joinLobby } from './library/actions/user';
 import { createNewReport } from './library/actions/report';
 
-import { getErrorResponse, getImageFileList } from './utils';
+import { getErrorResponse } from './utils';
 import { jsonHeader } from './library/headers';
-import { StatusError } from './StatusError';
 import { CloudflareBindings } from './library/env';
 
 /**
@@ -316,9 +313,9 @@ app.get('/joined-lobbies', async (c, next) => {
 });
 
 /**
- * Creates a new lobby entry as a draft.
+ * Creates a new lobby entry.
  */
-app.post('/lobby/draft', async (c, next) => {
+app.post('/lobby', async (c, next) => {
 	try {
 		const auth = c.get('auth');
 		const session = await auth.api.getSession({
@@ -336,12 +333,14 @@ app.post('/lobby/draft', async (c, next) => {
 		const title = formData.get('title') as string;
 		const backgroundColor = formData.get('backgroundColor') as string;
 		const viewersCanEdit = formData.get('viewersCanEdit') as string;
+		const isDraft = formData.get('isDraft') === 'true';
 
-		const lobbyId = await createDraftLobby(
+		const lobbyId = await createNewLobby(
 			ownerId,
 			title,
 			backgroundColor,
 			viewersCanEdit,
+			isDraft,
 			db,
 		);
 
@@ -349,51 +348,6 @@ app.post('/lobby/draft', async (c, next) => {
 			status: 200, headers: jsonHeader(),
 		});
 
-	} catch (error) {
-		return getErrorResponse(error);
-	}
-});
-
-app.post('/lobby', async (c, next) => {
-	const auth = c.get('auth');
-	const session = await auth.api.getSession({
-		headers: c.req.raw.headers,
-	});
-	if (!session) {
-		return new Response('Unauthorized', {
-			status: 403, headers: jsonHeader(),
-		})
-	}
-
-	try {
-		const { dev_plurr, IMAGES_BUCKET } = c.env;
-
-		const formData = await c.req.formData();
-		const ownerId = formData.get('ownerId') as string;
-		const viewersCanEdit = formData.get('viewersCanEdit') as string;
-		const title = formData.get('title') as string;
-		const backgroundColor = formData.get('backgroundColor') as string;
-
-		if (!ownerId || !viewersCanEdit || !title) {
-			throw new StatusError('Missing Form Data', 400);
-		}
-
-		const imageFiles = await getImageFileList(formData);
-
-		const res = await createNewLobby(
-			ownerId,
-			title,
-			backgroundColor,
-			imageFiles,
-			viewersCanEdit,
-			dev_plurr,
-			IMAGES_BUCKET
-		);
-
-		return new Response(JSON.stringify(res), {
-			status: 200,
-			headers: jsonHeader(),
-		});
 	} catch (error) {
 		return getErrorResponse(error);
 	}
@@ -447,36 +401,6 @@ app.put('/lobby/id/:id', async (c, next) => {
 		);
 
 		return Response.json(updateRes, {
-			status: 200, headers: jsonHeader(),
-		});
-	} catch (error) {
-		return getErrorResponse(error);
-	}
-});
-
-app.put('/lobby/id/:id/upload', async (c, next) => {
-	const auth = c.get('auth');
-	const session = await auth.api.getSession({
-		headers: c.req.raw.headers,
-	});
-
-	if (!session) {
-		return new Response('Unauthorized', {
-			status: 403, headers: jsonHeader(),
-		});
-	}
-
-	try {
-		const { dev_plurr, IMAGES_BUCKET } = c.env;
-		const lobbyId = c.req.param('id');
-
-		const formData = await c.req.formData();
-
-		const imageFiles = await getImageFileList(formData);
-
-		const newImageList = await addImagesToLobby(lobbyId, imageFiles, dev_plurr, IMAGES_BUCKET);
-
-		return Response.json(newImageList, {
 			status: 200, headers: jsonHeader(),
 		});
 	} catch (error) {
@@ -548,8 +472,12 @@ app.delete('/lobby/id/:id', async (c, next) => {
 /*                             Report Endpoints.                              */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Creates new report entry.
+ */
 app.post('/report', async (c, next) => {
 	try {
+		const db = c.get('db');
 		const { dev_plurr } = c.env;
 		const formData = await c.req.formData();
 		const lobbyId = formData.get('lobbyId') as string;
@@ -557,7 +485,7 @@ app.post('/report', async (c, next) => {
 		const email = formData.get('email') as string;
 		const msg = formData.get('msg') as string;
 
-		await createNewReport(lobbyId, creatorId, email, msg, dev_plurr);
+		await createNewReport(lobbyId, creatorId, email, msg, db);
 
 		return new Response('Created new report', {
 			status: 200, headers: jsonHeader(),
