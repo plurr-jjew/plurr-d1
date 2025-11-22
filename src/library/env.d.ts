@@ -1,7 +1,7 @@
-import { KVNamespace, D1Database, R2Bucket } from "@cloudflare/workers-types";
+import { KVNamespace, D1Database, R2Bucket, ImagesBinding } from "@cloudflare/workers-types";
 
 export interface CloudflareBindings extends Cloudflare.Env {
-    IMAGES: any;
+    IMAGES: ImagesBinding;
     IMAGES_BUCKET: R2Bucket;
     prod_plurr: D1Database;
     dev_plurr: D1Database;

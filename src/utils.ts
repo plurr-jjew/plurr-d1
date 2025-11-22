@@ -15,7 +15,7 @@ declare global {
     firstUploadOn: string;
     ownerId: string;
     title: string;
-    isJoined: string;
+    isJoined: boolean;
     backgroundColor: string;
     viewersCanEdit: boolean;
     images: string[] | { [key: string]: any }[];
@@ -81,10 +81,10 @@ export const generateSecureId = (length = 16): string => {
 }
 
 /**
- * Gets current time in format of SQL timestamp
- * @returns {string} timestamp in YYYY-MM-DD HH:MI:SS format
+ * Gets current time as date string
+ * @returns {string} timestamp in ISO format
  */
-export const getTimestamp = (): string => new Date().toISOString().slice(0, 19).replace('T', ' ');
+export const getTimestamp = (): string => new Date().toISOString();
 
 /**
  * Gets display string of an image entry's reactions

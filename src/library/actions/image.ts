@@ -1,26 +1,29 @@
-import { D1Database, R2Bucket } from "@cloudflare/workers-types";
+import { R2Bucket, ReadableStream, ImagesBinding } from "@cloudflare/workers-types";
+import { eq, and } from 'drizzle-orm';
+import { DrizzleD1Database } from "drizzle-orm/d1";
 
 import { StatusError } from "../../StatusError";
 import { getTimestamp, generateSecureId, getReactionDisplayString } from "../../utils";
+import { images, reactions } from "../db";
 
 /**
- * Gets image matching lobby and image id and transforms 
+ * Gets image matching lobby and image id and transforms with CF worker.
  * 
  * @param headers HTTP request headers
  * @param lobbyId string that matches to lobby _id
  * @param imageId string that matches to image _id
- * @param r2 R2 instance
- * @param r2Images cloudflare image worker
+ * @param imagesBucket R2 instance
+ * @param imagesWorker cloudflare image worker
  * @returns image response with finished image
  */
 export async function getImage(
   headers: Headers,
   lobbyId: string,
   imageId: string,
-  r2: R2Bucket,
-  r2Images: any,
+  imagesBucket: R2Bucket,
+  imagesWorker: ImagesBinding,
 ) {
-  const object = await r2.get(`${lobbyId}/${imageId}.jpeg`, {
+  const object = await imagesBucket.get(`${lobbyId}/${imageId}.jpeg`, {
     onlyIf: headers,
     range: headers,
   });
@@ -33,12 +36,43 @@ export async function getImage(
   object.writeHttpMetadata(_headers);
   headers.set("etag", object.httpEtag);
 
-  const imageResponse = (await r2Images.input(object.body)
-    .transform({ quality: 50 })
+  const imageResponse = (await imagesWorker.input(object.body)
+    .transform({ quality: 50, } as ImageTransform)
     .output({ format: 'image/jpeg' })
   ).response();
   return imageResponse;
 }
+
+/**
+ *  Uploads single image to images bucket and creates entry in Images table.
+ * 
+ * @param lobbyId _id of corresponding lobby entry
+ * @param uploaderId id of user that uploaded image
+ * @param file image file to be uploaded
+ * @param db Drizzle D1 db object
+ * @param imageBucket R2 images bucket object
+ * @returns 
+ */
+export async function uploadImage(
+  lobbyId: string,
+  uploaderId: string,
+  file: ReadableStream<any>,
+  db: DrizzleD1Database,
+  imagesBucket: R2Bucket,
+) {
+  const res = await db.insert(images).values({
+    _id: generateSecureId(10),
+    lobbyId,
+    uploadedOn: getTimestamp(),
+    uploaderId,
+    reactionString: '0',
+  }).returning({ imageId: images._id });
+
+  const imageId = res[0].imageId;
+  await imagesBucket.put(`${lobbyId}/${imageId}.jpeg`, file);
+
+  return imageId;
+};
 
 /**
  * Handles reaction for an image entry change from user
@@ -47,7 +81,7 @@ export async function getImage(
  * @param userId user id of user doing the action
  * @param newReaction new reaction value
  * @param imageId string to be matched to image _id
- * @param d1 D1 database instance
+ * @param db D1 database instance
  * @returns new string representing the number and type of reactions and new user reaction
  * 
  * If reaction entry does not exist, reaction entry is added with reaction and userId
@@ -60,68 +94,70 @@ export async function handleImageReact(
   imageId: string,
   userId: string,
   newReaction: string,
-  d1: D1Database,
+  db: DrizzleD1Database,
 ) {
   if (userId === undefined || newReaction === undefined) {
     throw new StatusError('Missing Form Data.', 400);
   }
 
-  const { results: imageResults } = await d1.prepare(
-    "SELECT lobby_id FROM Images WHERE _id = ?"
-  ).bind(imageId).run();
+  // Look if image with corresponding _id exists
+  const imageResults = await db.select({ lobbyId: images.lobbyId })
+    .from(images).where(eq(images._id, imageId));
 
   if (imageResults.length === 0) {
     throw new StatusError('Image Not Found', 400);
   }
 
-  const { lobby_id: lobbyId } = imageResults[0];
+  const { lobbyId } = imageResults[0];
   let userReaction = null;
 
-  const { results: reactionResults } = await d1.prepare(
-    "SELECT * FROM Reactions WHERE image_id = ? AND user_id = ?"
-  ).bind(imageId, userId).run();
-  // reaction entry does not exist, add row for reaction
+  const reactionResults = await db.select({ _id: reactions._id, reaction: reactions.reaction })
+    .from(reactions).where(and(
+      eq(reactions.imageId, imageId),
+      eq(reactions.userId, userId),
+    ));
+
+  // Reaction entry does not exist, add row for new reaction
   if (reactionResults.length === 0) {
-    await d1.prepare(`
-      INSERT INTO Reactions
-      (_id, user_id, lobby_id, image_id, created_on, reaction) VALUES
-      (?, ?, ?, ?, ?, ?)
-    `).bind(generateSecureId(12), userId, lobbyId, imageId, getTimestamp(), newReaction)
-      .run();
-      userReaction = newReaction;
+    await db.insert(reactions).values({
+      _id: generateSecureId(10),
+      userId,
+      lobbyId,
+      imageId,
+      createdOn: getTimestamp(),
+      reaction: newReaction,
+    });
+    userReaction = newReaction;
   } else {
     const { _id, reaction } = reactionResults[0];
 
+    // Remove reaction entry if new reaction is a like or new reaction is the same as the current
     if (reaction === newReaction || newReaction === 'like') {
-      await d1.prepare(
-        "DELETE FROM Reactions WHERE _id = ?"
-      ).bind(_id).run();
+      await db.delete(reactions).where(eq(reactions._id, _id));
 
     } else {
-      await d1.prepare(`
-        UPDATE Reactions
-        SET reaction = ?
-        WHERE _id = ?
-      `).bind(newReaction, _id).run();
+      await db.update(reactions)
+        .set({ reaction: newReaction })
+        .where(eq(reactions._id, _id));
       userReaction = newReaction;
     }
   }
 
-  const { results: newReactionResults } = await d1.prepare(
-    "SELECT _id, reaction FROM Reactions WHERE image_id = ? "
-  ).bind(imageId).run();
+  const newReactionResults = await db.select({ _id: reactions._id, reaction: reactions.reaction })
+    .from(reactions)
+    .where(eq(reactions.imageId, imageId)
+    );
 
-  const reactionString = getReactionDisplayString(
-    newReactionResults.map(({ reaction }) => 
+  // Create updated reaction string to be displayed
+  const updatedReactionString = getReactionDisplayString(
+    newReactionResults.map(({ reaction }) =>
       typeof reaction === 'string' ? reaction : null
     ).filter((n) => n !== null)
   );
-  console.log('new Reaction string:', imageId, reactionString)
 
-  await d1.prepare(`
-    UPDATE Images
-    SET reaction_string = ?
-    WHERE _id = ?
-  `).bind(reactionString, imageId).run();
-  return { reactionString, userReaction } ;
+  await db.update(images)
+    .set({ reactionString: updatedReactionString })
+    .where(eq(images._id, imageId));
+  
+  return { updatedReactionString, userReaction };
 }

@@ -1,7 +1,7 @@
 import type { D1Database, IncomingRequestCfProperties } from '@cloudflare/workers-types';
 import { betterAuth } from 'better-auth';
 import { withCloudflare } from 'better-auth-cloudflare';
-import { anonymous, phoneNumber } from 'better-auth/plugins';
+import { bearer, phoneNumber } from 'better-auth/plugins';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '../db';
@@ -35,6 +35,7 @@ function createAuth(env?: CloudflareBindings, cf?: IncomingRequestCfProperties) 
         },
         basePath: "/api/auth",
         plugins: [
+          bearer(),
           phoneNumber({
             sendOTP: async ({ phoneNumber, code }, request) => {
               // Implement sending OTP code via SMS
@@ -55,9 +56,10 @@ function createAuth(env?: CloudflareBindings, cf?: IncomingRequestCfProperties) 
         ],
         trustedOrigins: [
           'http://localhost:8081',
+          'plurr://',
         ],
         rateLimit: {
-          enabled: false,
+          enabled: true,
           window: 60, // Minimum KV TTL is 60s
           max: 100, // reqs/window
           customRules: {
@@ -71,6 +73,9 @@ function createAuth(env?: CloudflareBindings, cf?: IncomingRequestCfProperties) 
             },
           },
         },
+        // advanced: {
+        //   cookiePrefix: 'plurr',
+        // },
       },
     ),
     // Only add database adapter for CLI schema generation

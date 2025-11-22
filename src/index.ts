@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { drizzle, DrizzleD1Database } from 'drizzle-orm/d1';
+import { R2Bucket, ImagesBinding, ReadableStream } from "@cloudflare/workers-types";
 
 import { createAuth } from './library/auth';
-
-import { getImage, handleImageReact } from './library/actions/image';
+import { getImage, handleImageReact, uploadImage } from './library/actions/image';
 import {
 	getLobbyIdByCode,
 	getLobbyById,
@@ -13,6 +14,7 @@ import {
 	updateLobbyEntry,
 	addImagesToLobby,
 	deleteLobbyEntry,
+	createDraftLobby,
 } from './library/actions/lobby';
 import { getJoinedLobbies, joinLobby } from './library/actions/user';
 import { createNewReport } from './library/actions/report';
@@ -37,6 +39,9 @@ import { CloudflareBindings } from './library/env';
 
 type Variables = {
 	auth: ReturnType<typeof createAuth>;
+	db: DrizzleD1Database;
+	imagesBucket: R2Bucket;
+	imagesWorker: ImagesBinding;
 };
 
 const app = new Hono<{ Bindings: CloudflareBindings; Variables: Variables }>();
@@ -52,7 +57,15 @@ app.use(cors({
 // Middleware to initialize auth instance for each request
 app.use('*', async (c, next) => {
 	const auth = createAuth(c.env, (c.req.raw as any).cf || {});
+	const db = drizzle(c.env.dev_plurr);
+	const imagesBucket = c.env.IMAGES_BUCKET as R2Bucket;
+	const imagesWorker = c.env.IMAGES as ImagesBinding;
+
 	c.set('auth', auth);
+	c.set('db', db);
+	c.set('imagesBucket', imagesBucket);
+	c.set('imagesWorker', imagesWorker);
+
 	await next();
 });
 
@@ -60,6 +73,7 @@ app.use('*', async (c, next) => {
 app.all('/api/auth/*', async c => {
 	const auth = c.get('auth');
 	// console.log(c.req.raw);
+
 	return auth.handler(c.req.raw);
 });
 
@@ -67,9 +81,13 @@ app.all('/api/auth/*', async c => {
 /*                             Image Endpoints.                               */
 /* -------------------------------------------------------------------------- */
 
+/**
+ *  Gets image that matches lobby _id and image _id
+ */
 app.get('/image/:lobbyId/:imageId', async (c, next) => {
 	try {
-		const { IMAGES_BUCKET, IMAGES } = c.env;
+		const imagesBucket = c.get('imagesBucket');
+		const imagesWorker = c.get('imagesWorker');
 		const lobbyId = c.req.param('lobbyId');
 		const imageId = c.req.param('imageId');
 
@@ -77,18 +95,77 @@ app.get('/image/:lobbyId/:imageId', async (c, next) => {
 			new Headers(c.req.header()),
 			lobbyId,
 			imageId,
-			IMAGES_BUCKET,
-			IMAGES
+			imagesBucket,
+			imagesWorker,
 		);
 
-		return image;
+		if (!image) {
+			throw new Error('Failed to get image');
+		}
+
+		return image as Response;
 	} catch (error) {
 		return getErrorResponse(error);
 	}
 });
 
+/**
+ *  Uploads image and assigns it to lobby with matching _id
+ */
+app.post('/image/lobby-id/:lobbyId', async (c, next) => {
+	try {
+		const auth = c.get('auth');
+		const session = await auth.api.getSession({
+			headers: c.req.raw.headers,
+		});
+
+		if (!session) {
+			return new Response('Unauthorized', {
+				status: 403, headers: jsonHeader(),
+			});
+		}
+
+		const db = c.get('db');
+		const imagesBucket = c.get('imagesBucket');
+
+		const lobbyId = c.req.param('lobbyId') as string;
+		const formData = await c.req.formData();
+		const image = formData.get('image') as unknown as ReadableStream<any>;
+
+		const uploadRes = await uploadImage(
+			lobbyId,
+			session.user.id,
+			image,
+			db,
+			imagesBucket,
+		);
+
+		return new Response(uploadRes, {
+			status: 200, headers: jsonHeader(),
+		});
+	} catch (error) {
+		return getErrorResponse(error);
+	}
+});
+
+/**
+ *  Handles reaction action from user on an image
+ */
 app.put('/image/:id/react', async (c, next) => {
 	try {
+		const auth = c.get('auth');
+		const session = await auth.api.getSession({
+			headers: c.req.raw.headers,
+		});
+
+		if (!session) {
+			return new Response('Unauthorized', {
+				status: 403, headers: jsonHeader(),
+			});
+		}
+
+		const db = c.get('db');
+
 		const { dev_plurr } = c.env;
 		const imageId = c.req.param('id');
 
@@ -96,7 +173,12 @@ app.put('/image/:id/react', async (c, next) => {
 		const userId = await formData.get('userId') as string;
 		const newReaction = await formData.get('reaction') as string;
 
-		const reactionRes = await handleImageReact(imageId, userId, newReaction, dev_plurr);
+		const reactionRes = await handleImageReact(
+			imageId,
+			userId,
+			newReaction,
+			db
+		);
 
 		return Response.json(reactionRes, {
 			status: 200, headers: jsonHeader(),
@@ -110,12 +192,15 @@ app.put('/image/:id/react', async (c, next) => {
 /*                             Lobby Endpoints.                               */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Gets _id of corresponding lobby with matching lobbyCode.
+ */
 app.get('/lobby-id/code/:code', async (c, next) => {
 	try {
-		const { dev_plurr } = c.env;
+		const db = c.get('db');
 		const lobbyCode = c.req.param('code');
 
-		const lobbyId = await getLobbyIdByCode(lobbyCode, dev_plurr);
+		const lobbyId = await getLobbyIdByCode(lobbyCode, db);
 
 		return Response.json(lobbyId, {
 			status: 200, headers: jsonHeader(),
@@ -125,6 +210,9 @@ app.get('/lobby-id/code/:code', async (c, next) => {
 	}
 });
 
+/**
+ * Gets lobby entry of corresponding lobby with matching _id.
+ */
 app.get('/lobby/id/:id', async (c, next) => {
 	try {
 		const auth = c.get('auth');
@@ -132,10 +220,11 @@ app.get('/lobby/id/:id', async (c, next) => {
 			headers: c.req.raw.headers,
 		});
 		const userId = session?.user.id;
-		const { dev_plurr } = c.env;
+
+		const db = c.get('db');
 		const lobbyId = c.req.param('id');
-		console.log(session, userId)
-		const lobbyEntry = await getLobbyById(lobbyId, userId, dev_plurr);
+
+		const lobbyEntry = await getLobbyById(lobbyId, userId, db);
 
 		return Response.json(lobbyEntry, {
 			status: 200, headers: jsonHeader(),
@@ -145,18 +234,21 @@ app.get('/lobby/id/:id', async (c, next) => {
 	}
 });
 
+/**
+ * Gets lobby entry of corresponding lobby with matching lobby_code.
+ */
 app.get('/lobby/code/:code', async (c, next) => {
 	try {
 		const auth = c.get('auth');
 		const session = await auth.api.getSession({
 			headers: c.req.raw.headers,
 		});
-
 		const userId = session?.user.id;
-		const { dev_plurr } = c.env;
+
+		const db = c.get('db');
 		const lobbyCode = c.req.param('code');
 
-		const lobbyEntry = await getLobbyByCode(lobbyCode, userId, dev_plurr);
+		const lobbyEntry = await getLobbyByCode(lobbyCode, userId, db);
 
 		return Response.json(lobbyEntry, {
 			status: 200, headers: jsonHeader(),
@@ -166,22 +258,26 @@ app.get('/lobby/code/:code', async (c, next) => {
 	}
 });
 
+/**
+ * Gets list of corresponding lobby entries with matching user_id.
+ */
 app.get('/lobby/user/:userId', async (c, next) => {
-	const auth = c.get('auth');
-	const session = await auth.api.getSession({
-		headers: c.req.raw.headers,
-	});
-	if (!session) {
-		return new Response('Unauthorized', {
-			status: 403, headers: jsonHeader(),
-		})
-	}
-
 	try {
-		const { dev_plurr } = c.env;
+		const auth = c.get('auth');
+		const session = await auth.api.getSession({
+			headers: c.req.raw.headers,
+		});
 		const userId = c.req.param('userId');
 
-		const lobbyEntries = await getLobbiesByUser(userId, dev_plurr);
+		if (!session || session?.user.id !== userId) {
+			return new Response('Unauthorized', {
+				status: 403, headers: jsonHeader(),
+			});
+		}
+
+		const db = c.get('db');
+
+		const lobbyEntries = await getLobbiesByUser(userId, db);
 
 		return Response.json(lobbyEntries, {
 			status: 200, headers: jsonHeader(),
@@ -191,22 +287,24 @@ app.get('/lobby/user/:userId', async (c, next) => {
 	}
 });
 
+/**
+ * Gets joined lobbies of corresponding user with matching id.
+ */
 app.get('/joined-lobbies', async (c, next) => {
-	const auth = c.get('auth');
-	const session = await auth.api.getSession({
-		headers: c.req.raw.headers,
-	});
-	if (!session) {
-		return new Response('Unauthorized', {
-			status: 403, headers: jsonHeader(),
-		})
-	}
-	const userId = session.user.id;
-
 	try {
-		const { dev_plurr } = c.env;
+		const auth = c.get('auth');
+		const session = await auth.api.getSession({
+			headers: c.req.raw.headers,
+		});
+		if (!session) {
+			return new Response('Unauthorized', {
+				status: 403, headers: jsonHeader(),
+			})
+		}
+		const userId = session.user.id;
+		const db = c.get('db');
 
-		const lobbyEntries = await getJoinedLobbies(userId, dev_plurr);
+		const lobbyEntries = await getJoinedLobbies(userId, db);
 
 		return Response.json(lobbyEntries, {
 			status: 200, headers: jsonHeader(),
@@ -215,15 +313,58 @@ app.get('/joined-lobbies', async (c, next) => {
 		console.error(error);
 		return getErrorResponse(error);
 	}
+});
 
+/**
+ * Creates a new lobby entry as a draft.
+ */
+app.post('/lobby/draft', async (c, next) => {
+	try {
+		const auth = c.get('auth');
+		const session = await auth.api.getSession({
+			headers: c.req.raw.headers,
+		});
+		if (!session) {
+			return new Response('Unauthorized', {
+				status: 403, headers: jsonHeader(),
+			})
+		}
+
+		const db = c.get('db');
+		const formData = await c.req.formData();
+		const ownerId = formData.get('ownerId') as string;
+		const title = formData.get('title') as string;
+		const backgroundColor = formData.get('backgroundColor') as string;
+		const viewersCanEdit = formData.get('viewersCanEdit') as string;
+
+		const lobbyId = await createDraftLobby(
+			ownerId,
+			title,
+			backgroundColor,
+			viewersCanEdit,
+			db,
+		);
+
+		return new Response(lobbyId, {
+			status: 200, headers: jsonHeader(),
+		});
+
+	} catch (error) {
+		return getErrorResponse(error);
+	}
 });
 
 app.post('/lobby', async (c, next) => {
-	const auth = c.get("auth");
+	const auth = c.get('auth');
 	const session = await auth.api.getSession({
 		headers: c.req.raw.headers,
 	});
-	console.log(session);
+	if (!session) {
+		return new Response('Unauthorized', {
+			status: 403, headers: jsonHeader(),
+		})
+	}
+
 	try {
 		const { dev_plurr, IMAGES_BUCKET } = c.env;
 
@@ -258,30 +399,54 @@ app.post('/lobby', async (c, next) => {
 	}
 });
 
+/**
+ * Updated entry of lobby with corresponding _id.
+ */
 app.put('/lobby/id/:id', async (c, next) => {
 	try {
-		const { dev_plurr, IMAGES_BUCKET } = c.env;
+		const auth = c.get('auth');
+		const session = await auth.api.getSession({
+			headers: c.req.raw.headers,
+		});
+
+		if (!session) {
+			return new Response('Unauthorized', {
+				status: 403, headers: jsonHeader(),
+			});
+		}
+		const currentUserId = session.user.id;
+
+		const db = c.get('db');
+		const imagesBucket = c.get('imagesBucket');
 		const lobbyId = c.req.param('id');
 
 		// fields to be changed
-		const propertyNames = ['images', 'title', 'viewersCanEdit'];
-		const editedFields: { property: string, value: string }[] = [];
+		const stringPropertyNames = ['images', 'title', 'backgroundColor'];
+		const boolPropertyNames = ['viewersCanEdit', 'isDraft'];
+
+		const editedFields: { [key: string]: string | boolean } = {};
 		// get edited fields
 		const formData = await c.req.formData();
-
 		for (const pair of formData.entries()) {
-			if (propertyNames.includes(pair[0])) {
-				editedFields.push({
-					property: pair[0],
-					value: pair[1] as string,
-				});
+			if (stringPropertyNames.includes(pair[0])) {
+				editedFields[pair[0]] = pair[1] as string;
+			}
+			if (boolPropertyNames.includes(pair[0])) {
+				editedFields[pair[0]] = pair[1] === 'true';
 			}
 		}
 
 		const deletedImages = formData.get('deletedImages');
 		const deletedImageList = typeof deletedImages === 'string' ? JSON.parse(deletedImages) : [];
 
-		await updateLobbyEntry(lobbyId, editedFields, deletedImageList, dev_plurr, IMAGES_BUCKET);
+		await updateLobbyEntry(
+			lobbyId,
+			currentUserId,
+			editedFields,
+			deletedImageList,
+			db,
+			imagesBucket,
+		);
 
 		return new Response('Updated Lobby Entry', {
 			status: 200, headers: jsonHeader(),
@@ -292,12 +457,22 @@ app.put('/lobby/id/:id', async (c, next) => {
 });
 
 app.put('/lobby/id/:id/upload', async (c, next) => {
+	const auth = c.get('auth');
+	const session = await auth.api.getSession({
+		headers: c.req.raw.headers,
+	});
+
+	if (!session) {
+		return new Response('Unauthorized', {
+			status: 403, headers: jsonHeader(),
+		});
+	}
+
 	try {
 		const { dev_plurr, IMAGES_BUCKET } = c.env;
 		const lobbyId = c.req.param('id');
 
 		const formData = await c.req.formData();
-		console.log(lobbyId)
 
 		const imageFiles = await getImageFileList(formData);
 
@@ -339,6 +514,17 @@ app.put('/lobby/id/:id/join', async (c, next) => {
 });
 
 app.delete('/lobby/id/:id', async (c, next) => {
+	const auth = c.get('auth');
+	const session = await auth.api.getSession({
+		headers: c.req.raw.headers,
+	});
+
+	if (!session) {
+		return new Response('Unauthorized', {
+			status: 403, headers: jsonHeader(),
+		});
+	}
+
 	try {
 		const { dev_plurr, IMAGES_BUCKET } = c.env;
 		const lobbyId = c.req.param('id');
@@ -377,8 +563,8 @@ app.post('/report', async (c, next) => {
 });
 
 // Simple health check
-app.get("/health", c => {
-	return c.json({ status: "ok", timestamp: new Date().toISOString() });
+app.get('/health', c => {
+	return c.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 export default {

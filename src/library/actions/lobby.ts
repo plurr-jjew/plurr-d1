@@ -1,13 +1,20 @@
-import { D1Database, R2Bucket } from "@cloudflare/workers-types";
+import { D1Database, R2Bucket, ReadableStream } from "@cloudflare/workers-types";
+import { eq, and, desc } from 'drizzle-orm';
+import { DrizzleD1Database } from "drizzle-orm/d1";
 
 import { StatusError } from "../../StatusError";
-
 import {
   camelToSnake,
   generateRandomId,
   generateSecureId,
   getTimestamp
 } from "../../utils";
+import {
+  joinedLobbies as db_joinedLobbies,
+  images as db_images,
+  lobbies as db_lobbies,
+  reactions as db_reactions,
+} from "../db";
 
 /**
  * Uploads images to R2, adds image entreis and returns ids of image
@@ -63,59 +70,67 @@ const uploadImagesToR2 = async (
  * Takes lobby row from db and creates an object representing lobby entry.
  * 
  * @param lobbyRes row of lobby data from db
- * @param hostname hostname of request
- * @param d1 D1 database instance
+ * @param currentUserId id of user requesting lobby entry
+ * @param db Drizzle D1 database instance
  * @returns lobby entry object
  */
 const getLobbyEntry = async (
   lobbyRes: { [key: string]: any },
   currentUserId: string | undefined,
-  d1: D1Database
+  db: DrizzleD1Database
 ): Promise<LobbyEntry> => {
   const {
     _id: lobbyId,
-    lobby_code,
-    created_on,
-    first_upload_on,
-    owner_id,
+    lobbyCode,
+    createdOn,
+    firstUploadOn,
+    ownerId,
     title,
-    background_color,
-    viewers_can_edit,
+    backgroundColor,
+    viewersCanEdit,
     images,
   } = lobbyRes;
   const imageList = typeof images === 'string' ? JSON.parse(images) : [];
 
-  const { results: imageResults } = await d1.prepare(
-    "SELECT _id, reaction_string from Images WHERE lobby_id = ?"
-  ).bind(lobbyId).run();
+  const imageResults = await db.select({ _id: db_images._id, reactionString: db_images.reactionString })
+    .from(db_images).where(eq(db_images.lobbyId, lobbyId));
 
-  const { results: reactionResults } = await d1.prepare(
-    "SELECT image_id, reaction from Reactions WHERE lobby_id = ? AND user_id = ?"
-  ).bind(lobbyId, currentUserId).run();
+  let reactionResults: { imageId: string, reaction: string }[] = [];
+  let joinedResults: { _id: string }[] = [];
 
-  const { results: joinedResults } = await d1.prepare(
-    "SELECT * FROM JoinedLobbies WHERE lobby_id = ? AND user_id = ?"
-  ).bind(lobbyId, currentUserId).run();
+  if (currentUserId) {
+    reactionResults = await db.select({
+      imageId: db_reactions.imageId, reaction: db_reactions.reaction
+    }).from(db_reactions).where(and(
+      eq(db_reactions.lobbyId, lobbyId),
+      eq(db_reactions.userId, currentUserId),
+    ));
+    joinedResults = await db.select({ _id: db_joinedLobbies._id })
+      .from(db_joinedLobbies).where(and(
+        eq(db_joinedLobbies.lobbyId, lobbyId),
+        eq(db_joinedLobbies.userId, currentUserId),
+      ));
+  }
 
   const imageEntries = imageList.map((imageId: string) => {
-    const foundReaction = reactionResults.find((reaction) => reaction.image_id === imageId);
+    const foundReaction = reactionResults.find((reaction) => reaction.imageId === imageId);
     return ({
       _id: imageId,
-      reactionString: imageResults.find((imageRes) => imageRes._id === imageId)?.reaction_string,
+      reactionString: imageResults.find((imageRes) => imageRes._id === imageId)?.reactionString,
       currentUserReaction: foundReaction ? foundReaction.reaction : null,
     });
   });
 
   return ({
     _id: lobbyId,
-    lobbyCode: lobby_code,
-    createdOn: created_on,
-    firstUploadOn: first_upload_on,
+    lobbyCode: lobbyCode,
+    createdOn: createdOn,
+    firstUploadOn: firstUploadOn,
     isJoined: joinedResults.length !== 0,
-    ownerId: owner_id,
+    ownerId: ownerId,
     title,
-    backgroundColor: background_color,
-    viewersCanEdit: viewers_can_edit === 'true',
+    backgroundColor: backgroundColor,
+    viewersCanEdit: viewersCanEdit === 'true',
     images: imageEntries,
   });
 };
@@ -124,13 +139,12 @@ const getLobbyEntry = async (
  * Gets lobby _id given a corresponding 6 character code
  * 
  * @param lobbyCode 6 char code for lobby_code
- * @param d1 D1 database instance
+ * @param db D1 database instance
  * @returns _id value for the corresponding lobby entry
  */
-export async function getLobbyIdByCode(lobbyCode: string, d1: D1Database) {
-  const { results } = await d1.prepare(
-    "SELECT _id FROM Lobbies WHERE lobby_code = ?",
-  ).bind(lobbyCode).run();
+export async function getLobbyIdByCode(lobbyCode: string, db: DrizzleD1Database) {
+  const results = await db.select({ _id: db_lobbies._id })
+    .from(db_lobbies).where(eq(db_lobbies.lobbyCode, lobbyCode));
 
   if (results.length === 0) {
     throw new StatusError('Lobby not found', 404);
@@ -144,74 +158,131 @@ export async function getLobbyIdByCode(lobbyCode: string, d1: D1Database) {
  * 
  * @param lobbyId id of lobby
  * @param currentUserId id of current session's user
- * @param d1 d1 instance
+ * @param db Drizzle D1 instance
  * @returns Object representing lobby entry
  */
-export async function getLobbyById(lobbyId: string, currentUserId: string | undefined, d1: D1Database) {
-  const { results } = await d1.prepare(
-    "SELECT * FROM Lobbies WHERE _id = ?",
-  ).bind(lobbyId).run();
+export async function getLobbyById(
+  lobbyId: string,
+  currentUserId: string | undefined,
+  db: DrizzleD1Database
+) {
+  const results = await db.select()
+    .from(db_lobbies).where(and(
+      eq(db_lobbies._id, lobbyId),
+      eq(db_lobbies.isDraft, false),
+    ));
 
   if (results.length === 0) {
     throw new StatusError('Lobby not found', 404);
   }
 
-  return await getLobbyEntry(results[0], currentUserId, d1);
+  return await getLobbyEntry(results[0], currentUserId, db);
 }
 
 /**
  * Gets lobby entry which matches lobby_code
  * 
  * @param lobbyCode 6 character code for the lobby
- * @param d1 D1 instance
+ * @param currentUserId id of user requesting lobby
+ * @param db Drizzle D1 instance
  * @returns Object representing lobby entry
  */
-export async function getLobbyByCode(lobbyCode: string, currentUserId: string | undefined, d1: D1Database) {
-  // TODO: add auth
+export async function getLobbyByCode(
+  lobbyCode: string,
+  currentUserId: string | undefined,
+  db: DrizzleD1Database
+) {
+  const results = await db.select()
+    .from(db_lobbies).where(and(
+      eq(db_lobbies.lobbyCode, lobbyCode),
+      eq(db_lobbies.isDraft, false),
+    ));
 
-  const { results } = await d1.prepare(
-    "SELECT * FROM Lobbies WHERE lobby_code = ?",
-  ).bind(lobbyCode).run();
 
   if (results.length === 0) {
     throw new StatusError('Lobby not found', 404);
   }
 
-  return await getLobbyEntry(results[0], currentUserId, d1);
+  return await getLobbyEntry(results[0], currentUserId, db);
 };
 
 /**
  * Gets lobby entry which matches lobby_code
  * 
  * @param userId 6 character code for the lobby
- * @param d1 D1 instance
+ * @param db Drizzle D1 instance
  * @returns HTTP response with object with fields representing lobby entry
  */
-export async function getLobbiesByUser(userId: string, d1: D1Database) {
-  // TODO: add auth
+export async function getLobbiesByUser(userId: string, db: DrizzleD1Database) {
+  const results = await db.select({
+    _id: db_lobbies._id,
+    createdOn: db_lobbies.createdOn,
+    title: db_lobbies.title,
+    images: db_lobbies.images,
+  }).from(db_lobbies)
+    .where(and(
+      eq(db_lobbies.ownerId, userId),
+      eq(db_lobbies.isDraft, false),
+    ))
+    .orderBy(desc(db_lobbies.createdOn));
 
-  const { results } = await d1.prepare(
-    "SELECT * FROM Lobbies WHERE owner_id = ? ORDER BY created_on DESC",
-  ).bind(userId).run();
-
-  return results.map(({ _id, created_on, title, images }) => {
+  return results.map((lobbyEntry) => {
+    const { images } = lobbyEntry;
     const imageList = JSON.parse(images as string);
     return {
-      _id: _id,
-      createdOn: created_on,
-      title: title,
+      ...lobbyEntry,
       firstImageId: imageList[0],
     };
   });
 };
 
 /**
- * Creates a new lobby entry
+ * Creates a draft entry for a new lobby
  * 
- * @param request HTTP request object
- * @param d1 D1 instance
- * @param r2 R2 instance
- * @returns HTTP response with lobby code and lobby id
+ * @param ownerId _id of user that created draft
+ * @param title title created by user
+ * @param backgroundColor hex color chosen by user for background color gradient
+ * @param viewersCanEdit determines if non owner users can upload/edit lobby
+ * @param db D1 Drizzle db object
+ * @returns id of the created draft lobby entry
+ */
+export async function createDraftLobby(
+  ownerId: string,
+  title: string,
+  backgroundColor: string,
+  viewersCanEdit: string,
+  db: DrizzleD1Database,
+) {
+  const res = await db.insert(db_lobbies).values({
+    _id: generateSecureId(),
+    lobbyCode: generateSecureId(6),
+    createdOn: getTimestamp(),
+    firstUploadOn: null,
+    ownerId,
+    title,
+    backgroundColor,
+    isDraft: true,
+    viewersCanEdit: viewersCanEdit === 'true',
+    images: '[]',
+  }).onConflictDoUpdate({
+    target: db_lobbies.lobbyCode,
+    set: { lobbyCode: generateSecureId(6) }
+  }).returning({ newId: db_lobbies._id });
+
+  return res[0].newId;
+}
+
+/**
+ * Creates a new lobby entry in db
+ * 
+ * @param ownerId 
+ * @param title 
+ * @param backgroundColor 
+ * @param imageFiles 
+ * @param viewersCanEdit 
+ * @param d1 
+ * @param r2 
+ * @returns lobby id and lobby code of new lobby
  */
 export async function createNewLobby(
   ownerId: string,
@@ -276,43 +347,38 @@ export async function createNewLobby(
  * Updates fields of lobby entry which matches _id and deletes images.
  * 
  * @param lobbyId string to be matched with _id
+ * @param currentUserId id of user making request
  * @param editedFields fields to be changed in lobby entry
  * @param deletedImageList list of _id's of images to be deleted
- * @param d1 D1 instance
- * @param r2 R2 instance
+ * @param db D1 instance
+ * @param imagesBucket R2 instance
  * @returns HTTP response object
  */
 export async function updateLobbyEntry(
   lobbyId: string,
-  editedFields: { property: string, value: string }[],
+  currentUserId: string,
+  editedFields: { [key: string]: string | boolean },
   deletedImageList: string[],
-  d1: D1Database,
-  r2: R2Bucket
+  db: DrizzleD1Database,
+  imagesBucket: R2Bucket
 ) {
-  const { results } = await d1.prepare(
-    "SELECT * FROM Lobbies WHERE _id = ?",
-  ).bind(lobbyId).run();
+  const results = await db.select().from(db_lobbies).where(eq(db_lobbies._id, lobbyId));
 
   if (results.length === 0) {
     throw new StatusError('Lobby Not Found', 400);
   }
   const { ownerId } = results[0];
-  // TODO: add auth
+  if (ownerId !== currentUserId) {
+    throw new StatusError('Unauthorized', 403);
+  }
 
   const deletePromises = deletedImageList.map(async (imageId: string) => {
-    await r2.delete(`${lobbyId}/${imageId}`);
+    await imagesBucket.delete(`${lobbyId}/${imageId}`);
   });
   await Promise.all(deletePromises);
 
-  const setString = editedFields.map((field, idx) =>
-    `${camelToSnake(field.property)} = '${field.value}'`).join(',');
-  console.log(setString)
-
-  await d1.prepare(`
-    UPDATE Lobbies
-    SET ${setString}
-    WHERE _id = ?
-  `).bind(lobbyId).run();
+  await db.update(db_lobbies)
+    .set(editedFields).where(eq(db_lobbies._id, lobbyId));
 
   return true;
 }
