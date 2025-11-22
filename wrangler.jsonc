@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "plurr-d1",
+	"name": "plurr",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-11-04",
 	"observability": {
@@ -36,7 +36,7 @@
 	"r2_buckets": [
 		{
 			"binding": "IMAGES_BUCKET",
-			"bucket_name": "lobby-images"
+			"bucket_name": "lobby-images-dev"
 		}
 	],
 	"images": {
@@ -52,7 +52,66 @@
 	 * Environment Variables
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
 	 */
-	// "vars": { "MY_VARIABLE": "production_value" }
+	"env": {
+		"local": {
+			"vars": {
+				"ENV": "dev",
+				"BASE_URL": "http://localhost:8787",
+				"BETTER_AUTH_URL": "http://localhost:8787",
+			},
+			"d1_databases": [
+				{
+					"binding": "dev_plurr",
+					"database_name": "dev-plurr",
+					"database_id": "bc219df9-f1b5-4e8d-a86f-39732808b75a"
+				}
+			],
+			"r2_buckets": [
+				{
+					"binding": "IMAGES_BUCKET",
+					"bucket_name": "lobby-images-dev"
+				}
+			],
+			"images": {
+				"binding": "IMAGES",
+			},
+			"kv_namespaces": [
+				{
+					"binding": "KV_USERS",
+					"id": "5160afc6058543498fe62f7df6563b23"
+				}
+			],
+		},
+		"dev": {
+			"vars": {
+				"ENV": "dev",
+				"BASE_URL": "https://plurr-dev.plurr.workers.dev",
+				"BETTER_AUTH_URL": "https://plurr-dev.plurr.workers.dev",
+			},
+			"d1_databases": [
+				{
+					"binding": "dev_plurr",
+					"database_name": "dev-plurr",
+					"database_id": "bc219df9-f1b5-4e8d-a86f-39732808b75a"
+				}
+			],
+			"r2_buckets": [
+				{
+					"binding": "IMAGES_BUCKET",
+					"bucket_name": "lobby-images-dev"
+				}
+			],
+			"images": {
+				"binding": "IMAGES",
+			},
+			"kv_namespaces": [
+				{
+					"binding": "KV_USERS",
+					"id": "5160afc6058543498fe62f7df6563b23"
+				}
+			],
+		}
+	}
 	/**
 	 * Note: Use secrets to store sensitive data.
 	 * https://developers.cloudflare.com/workers/configuration/secrets/

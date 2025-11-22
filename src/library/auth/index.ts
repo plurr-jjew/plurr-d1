@@ -1,16 +1,21 @@
-import type { D1Database, IncomingRequestCfProperties } from '@cloudflare/workers-types';
 import { betterAuth } from 'better-auth';
 import { withCloudflare } from 'better-auth-cloudflare';
 import { bearer, phoneNumber } from 'better-auth/plugins';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { drizzle } from 'drizzle-orm/d1';
+import { drizzle, DrizzleD1Database } from 'drizzle-orm/d1';
+import type { D1Database, IncomingRequestCfProperties } from '@cloudflare/workers-types';
+
 import { schema } from '../db';
 import type { CloudflareBindings } from '../env';
 
 // Single auth configuration that handles both CLI and runtime scenarios
-function createAuth(env?: CloudflareBindings, cf?: IncomingRequestCfProperties) {
+function createAuth(
+  env?: CloudflareBindings,
+  cf?: IncomingRequestCfProperties,
+  db?: DrizzleD1Database<typeof schema>,
+) {
   // Use actual DB for runtime, empty object for CLI
-  const db = env ? drizzle(env.dev_plurr, { schema, logger: true }) : ({} as any);
+  // const db = env ? drizzle(env.dev_plurr, { schema, logger: true }) : ({} as any);
 
   return betterAuth({
     ...withCloudflare(
@@ -20,7 +25,7 @@ function createAuth(env?: CloudflareBindings, cf?: IncomingRequestCfProperties) 
         cf: cf || {},
         d1: env
           ? {
-            db,
+            db: db || ({} as any),
             options: {
               usePlural: true,
               debugLogs: true,
@@ -34,6 +39,7 @@ function createAuth(env?: CloudflareBindings, cf?: IncomingRequestCfProperties) 
           enabled: false,
         },
         basePath: "/api/auth",
+        // baseURL: env?.BASE_URL,
         plugins: [
           bearer(),
           phoneNumber({
@@ -56,7 +62,8 @@ function createAuth(env?: CloudflareBindings, cf?: IncomingRequestCfProperties) 
         ],
         trustedOrigins: [
           'http://localhost:8081',
-          'plurr://',
+          'plurr://*',
+          'exp://*',
         ],
         rateLimit: {
           enabled: true,
@@ -73,9 +80,12 @@ function createAuth(env?: CloudflareBindings, cf?: IncomingRequestCfProperties) 
             },
           },
         },
-        // advanced: {
-        //   cookiePrefix: 'plurr',
-        // },
+        advanced: {
+          cookiePrefix: 'plurr',
+          // crossSubDomainCookies: {
+          //   enabled: true
+          // }
+        }
       },
     ),
     // Only add database adapter for CLI schema generation

@@ -3,6 +3,7 @@ import { eq, and } from 'drizzle-orm';
 import { DrizzleD1Database } from "drizzle-orm/d1";
 
 import {
+  schema,
   images as db_images,
   reactions as db_reactions
 } from "../db";
@@ -40,7 +41,7 @@ export async function getImage(
   headers.set("etag", object.httpEtag);
 
   const imageResponse = (await imagesWorker.input(object.body)
-    .transform({ quality: 50, } as ImageTransform)
+    .transform({ quality: 50, fit: 'scale-down', width: 800 } as ImageTransform)
     .output({ format: 'image/jpeg' })
   ).response();
   return imageResponse;
@@ -60,7 +61,7 @@ export async function uploadImage(
   lobbyId: string,
   uploaderId: string,
   file: ReadableStream<any>,
-  db: DrizzleD1Database,
+  db: DrizzleD1Database<typeof schema>,
   imagesBucket: R2Bucket,
 ) {
   const res = await db.insert(db_images).values({
@@ -97,7 +98,7 @@ export async function handleImageReact(
   imageId: string,
   userId: string,
   newReaction: string,
-  db: DrizzleD1Database,
+  db: DrizzleD1Database<typeof schema>,
 ) {
   if (userId === undefined || newReaction === undefined) {
     throw new StatusError('Missing Form Data.', 400);

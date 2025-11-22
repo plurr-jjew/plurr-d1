@@ -3,8 +3,8 @@
 	"version": "0.0.0",
 	"private": true,
 	"scripts": {
-		"deploy": "wrangler deploy",
-		"dev": "wrangler dev",
+		"deploy": "wrangler deploy --env dev",
+		"dev": "wrangler dev --env local",
 		"start": "wrangler dev",
 		"test": "vitest",
 		"cf-typegen": "wrangler types --env-interface CloudflareBindings",
@@ -12,7 +12,8 @@
 		"auth:format": "npx --yes prettier --write src/library/db/auth.schema.ts",
 		"auth:update": "npm run auth:generate && npm run auth:format",
 		"db:generate": "drizzle-kit generate",
-		"db:migrate:dev": "wrangler d1 migrations apply dev_plurr --local",
+		"db:migrate:dev:local": "wrangler d1 migrations apply dev_plurr --local",
+		"db:migrate:dev:remote": "wrangler d1 migrations apply dev_plurr --remote",
 		"db:migrate:prod": "wrangler d1 migrations apply dev_plurr --remote",
 		"db:studio:dev": "drizzle-kit studio",
 		"db:studio:prod": "NODE_ENV=production drizzle-kit studio"

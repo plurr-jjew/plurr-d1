@@ -1,6 +1,6 @@
 import { DrizzleD1Database } from "drizzle-orm/d1";
 
-import { reports as db_reports } from "../db";
+import { schema, reports as db_reports } from "../db";
 import { StatusError } from "../../StatusError";
 import { generateSecureId, getTimestamp } from "../../utils";
 
@@ -19,7 +19,7 @@ export async function createNewReport(
   creatorId: string,
   email: string,
   msg: string,
-  db: DrizzleD1Database,
+  db: DrizzleD1Database<typeof schema>,
 ) {
   if (!lobbyId || !email || !msg) {
     throw new StatusError('Missing Required Fields', 400);

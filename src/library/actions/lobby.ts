@@ -1,15 +1,16 @@
-import { R2Bucket} from "@cloudflare/workers-types";
+import { R2Bucket } from '@cloudflare/workers-types';
 import { eq, and, desc } from 'drizzle-orm';
-import { DrizzleD1Database } from "drizzle-orm/d1";
+import { DrizzleD1Database } from 'drizzle-orm/d1';
 
-import { StatusError } from "../../StatusError";
-import { generateSecureId, getTimestamp } from "../../utils";
+import { StatusError } from '../../StatusError';
+import { generateSecureId, getTimestamp } from '../../utils';
 import {
+  schema,
   joinedLobbies as db_joinedLobbies,
   images as db_images,
   lobbies as db_lobbies,
   reactions as db_reactions,
-} from "../db";
+} from '../db';
 
 /**
  * Takes lobby row from db and creates an object representing lobby entry.
@@ -22,7 +23,7 @@ import {
 const getLobbyEntry = async (
   lobbyRes: { [key: string]: any },
   currentUserId: string | undefined,
-  db: DrizzleD1Database
+  db: DrizzleD1Database<typeof schema>
 ): Promise<LobbyEntry> => {
   const {
     _id: lobbyId,
@@ -85,7 +86,7 @@ const getLobbyEntry = async (
  * @param db D1 database instance
  * @returns _id value for the corresponding lobby entry
  */
-export async function getLobbyIdByCode(lobbyCode: string, db: DrizzleD1Database) {
+export async function getLobbyIdByCode(lobbyCode: string, db: DrizzleD1Database<typeof schema>) {
   const results = await db.select({ _id: db_lobbies._id })
     .from(db_lobbies).where(eq(db_lobbies.lobbyCode, lobbyCode));
 
@@ -107,7 +108,7 @@ export async function getLobbyIdByCode(lobbyCode: string, db: DrizzleD1Database)
 export async function getLobbyById(
   lobbyId: string,
   currentUserId: string | undefined,
-  db: DrizzleD1Database
+  db: DrizzleD1Database<typeof schema>
 ) {
   const results = await db.select()
     .from(db_lobbies).where(and(
@@ -133,7 +134,7 @@ export async function getLobbyById(
 export async function getLobbyByCode(
   lobbyCode: string,
   currentUserId: string | undefined,
-  db: DrizzleD1Database
+  db: DrizzleD1Database<typeof schema>
 ) {
   const results = await db.select()
     .from(db_lobbies).where(and(
@@ -155,7 +156,7 @@ export async function getLobbyByCode(
  * @param db Drizzle D1 instance
  * @returns HTTP response with object with fields representing lobby entry
  */
-export async function getLobbiesByUser(userId: string, db: DrizzleD1Database) {
+export async function getLobbiesByUser(userId: string, db: DrizzleD1Database<typeof schema>) {
   const results = await db.select({
     _id: db_lobbies._id,
     createdOn: db_lobbies.createdOn,
@@ -195,7 +196,7 @@ export async function createNewLobby(
   backgroundColor: string,
   viewersCanEdit: string,
   isDraft: boolean,
-  db: DrizzleD1Database,
+  db: DrizzleD1Database<typeof schema>,
 ) {
   const res = await db.insert(db_lobbies).values({
     _id: generateSecureId(),
@@ -233,7 +234,7 @@ export async function updateLobbyEntry(
   changes: { [key: string]: string | boolean | string[] },
   addedImages: string[],
   deletedImages: string[],
-  db: DrizzleD1Database,
+  db: DrizzleD1Database<typeof schema>,
   imagesBucket: R2Bucket
 ) {
   const lobbyEntry = await db.select().from(db_lobbies)
@@ -284,7 +285,7 @@ export async function updateLobbyEntry(
 export async function deleteLobbyEntry(
   lobbyId: string,
   currentUserId: string,
-  db: DrizzleD1Database,
+  db: DrizzleD1Database<typeof schema>,
   imagesBucket: R2Bucket
 ) {
   const results = await db.select({ ownerId: db_lobbies.ownerId })

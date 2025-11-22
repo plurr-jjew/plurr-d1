@@ -2,6 +2,7 @@ import { DrizzleD1Database } from 'drizzle-orm/d1';
 import { eq, and, inArray } from 'drizzle-orm';
 
 import {
+  schema,
   joinedLobbies as db_joinedLobbies,
   lobbies as db_lobbies,
 } from '../db';
@@ -15,7 +16,7 @@ import { generateSecureId, getTimestamp } from '../../utils';
  * @param db Drizzle D1 instance
  * @returns 
  */
-export const joinLobby = async (lobbyId: string, userId: string, db: DrizzleD1Database) => {
+export const joinLobby = async (lobbyId: string, userId: string, db: DrizzleD1Database<typeof schema>) => {
   const results = await db.select()
     .from(db_joinedLobbies).where(and(
       eq(db_joinedLobbies.lobbyId, lobbyId),
@@ -44,7 +45,7 @@ export const joinLobby = async (lobbyId: string, userId: string, db: DrizzleD1Da
  * @param db Drizzle D1 instace
  * @returns list of lobbies that the user has joined
  */
-export const getJoinedLobbies = async (userId: string, db: DrizzleD1Database) => {
+export const getJoinedLobbies = async (userId: string, db: DrizzleD1Database<typeof schema>) => {
   const joinedLobbiesResults = await db.select({ lobbyId: db_joinedLobbies.lobbyId })
     .from(db_joinedLobbies).where(eq(db_joinedLobbies.userId, userId));
 

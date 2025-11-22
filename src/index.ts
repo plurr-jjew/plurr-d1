@@ -20,6 +20,7 @@ import { createNewReport } from './library/actions/report';
 import { getErrorResponse } from './utils';
 import { jsonHeader } from './library/headers';
 import { CloudflareBindings } from './library/env';
+import { schema } from './library/db/schema';
 
 /**
  * Welcome to Cloudflare Workers! This is your first worker.
@@ -36,7 +37,7 @@ import { CloudflareBindings } from './library/env';
 
 type Variables = {
 	auth: ReturnType<typeof createAuth>;
-	db: DrizzleD1Database;
+	db: DrizzleD1Database<typeof schema>;
 	imagesBucket: R2Bucket;
 	imagesWorker: ImagesBinding;
 };
@@ -53,8 +54,8 @@ app.use(cors({
 
 // Middleware to initialize auth instance for each request
 app.use('*', async (c, next) => {
-	const auth = createAuth(c.env, (c.req.raw as any).cf || {});
-	const db = drizzle(c.env.dev_plurr);
+	const db = drizzle(c.env.dev_plurr, { schema });
+	const auth = createAuth(c.env, (c.req.raw as any).cf || {}, db);
 	const imagesBucket = c.env.IMAGES_BUCKET as R2Bucket;
 	const imagesWorker = c.env.IMAGES as ImagesBinding;
 
